@@ -1,6 +1,6 @@
-# h3retik Operator Skill (Agent-Facing)
+# h3retik Operator Skill (Paste-Into-LLM)
 
-Use this skill when you (an agent) need to operate `h3retik` as the red-team operator control plane: drive headless commands, track evidence, and choose next actions from observed telemetry.
+This document is meant to be pasted into an LLM/system prompt. It teaches an agent how to operate `h3retik` as a red-team operator control plane: drive headless commands, track evidence, and choose next actions from observed telemetry.
 
 ## Boundaries (Non-Negotiable)
 
@@ -16,6 +16,20 @@ Run exploit, OSINT, and onchain workflows from one control plane:
 - Headless orchestration: `h3retik pipeline ...`.
 - Direct execution inside Kali: `h3retik kali <cmd...>`.
 
+## How to Find the Docs (Repo-Relative)
+
+Your environment may place the `h3retik` repository in any directory. Do not assume absolute paths.
+
+When you have access to the repo filesystem, locate these files **within the `h3retik` repo root**:
+
+- `README.md` (entrypoint, install, CLI surface)
+- `SKILL.md` (this file; operator guidance)
+- `docs/` (literate programming + OPEX methodology)
+  - `docs/LITERATE_PROGRAMMING.md`
+  - `docs/CAPABILITIES.md`
+
+If you cannot locate files, ask the operator for the repo path or a copy/paste of the relevant docs.
+
 ## Runtime Topology (What Exists)
 
 - Root launcher: `h3retik`
@@ -25,9 +39,9 @@ Run exploit, OSINT, and onchain workflows from one control plane:
 - Telemetry bus: `telemetry/` (append-only JSONL streams)
 - Artifacts store: `artifacts/` (files referenced by loot/evidence)
 
-Docs:
-- Literate architecture: `docs/LITERATE_PROGRAMMING.md`
-- Capability matrix: `docs/CAPABILITIES.md`
+Repo docs (relative to repo root):
+- Literate architecture + operator model: `docs/LITERATE_PROGRAMMING.md`
+- Capability matrix + mounted suite: `docs/CAPABILITIES.md`
 
 ## Fast Path (Agent Quickstart)
 
@@ -59,7 +73,7 @@ In h3retik, the operator is not “configuring tools”; the operator is configu
 
 If you are asked “how do I drive it like a pro?”, the answer is: set scope → run a small pipeline → read telemetry → choose next action based on evidence and OPSEC.
 
-## Where Pipelines and Tools Live
+## Where Pipelines and Tools Live (Repo-Relative)
 
 - Module manifests (operator actions): `modules/exploit/*.json`
 - Kali headless wrappers:
@@ -79,6 +93,8 @@ All “what happened” should be derived from telemetry, not narrative.
 - `telemetry/loot.jsonl`: extracted evidence items (credentials, endpoints, files, artifacts, validated access, etc).
 - `telemetry/exploits.jsonl`: exploit-level classification records (when applicable).
 - `telemetry/state.json`: current target and runtime context; treat as the active operation “header”.
+
+Important: the `telemetry/` and `artifacts/` directories are created in the repo workspace (or wherever the operator runs h3retik). Do not assume they exist elsewhere; always resolve them relative to the active run directory the operator uses.
 
 Agent behavior rule: when you claim something is true (“creds fit”, “endpoint writable”, “admin access”), you must be able to point to a telemetry event that supports it.
 
