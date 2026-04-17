@@ -1,48 +1,122 @@
-# h3retik Operator Skill
+# h3retik Operator Skill (Agent-Facing)
 
-Use this skill when operating the `h3retik` black-box TUI + headless Kali runtime.
+Use this skill when you (an agent) need to operate `h3retik` as the red-team operator control plane: drive headless commands, track evidence, and choose next actions from observed telemetry.
+
+## Boundaries (Non-Negotiable)
+
+- Only operate against targets you are explicitly authorized to test.
+- Prefer safe discovery and evidence capture; escalate to noisy actions only when scope and RoE allow.
+- Treat all outputs as evidentiary artifacts: do not fabricate results and do not “assume pwned” without evidence.
 
 ## Mission
 
 Run exploit, OSINT, and onchain workflows from one control plane:
 
-- `h3retik` for interactive TUI operations.
-- `h3retik pipeline ...` and wrapper scripts for headless automation.
-- `h3retik kali "<cmd>"` for direct Kali execution.
+- Interactive: `h3retik` (TUI).
+- Headless orchestration: `h3retik pipeline ...`.
+- Direct execution inside Kali: `h3retik kali <cmd...>`.
 
-## Runtime Topology
+## Runtime Topology (What Exists)
 
 - Root launcher: `h3retik`
-- Kali image: `h3retik/kali:v0.0.1` (compose service: `kali`)
-- Kali container (default): `jsbb-kali`
-- Telemetry: `telemetry/`
-- Artifacts: `artifacts/`
+- Compose service: `kali`
+- Kali image tag: `h3retik/kali:v0.0.1`
+- Kali container name (default): `jsbb-kali`
+- Telemetry bus: `telemetry/` (append-only JSONL streams)
+- Artifacts store: `artifacts/` (files referenced by loot/evidence)
 
-## Fast Path
+Docs:
+- Literate architecture: `docs/LITERATE_PROGRAMMING.md`
+- Capability matrix: `docs/CAPABILITIES.md`
 
-1. Start runtime: `h3retik up`
-2. Set target: `h3retik target set --kind custom --url http://127.0.0.1:8080`
-3. Launch TUI: `h3retik`
-4. Headless pipeline (optional): `h3retik pipeline --target http://127.0.0.1 --profile standard`
+## Fast Path (Agent Quickstart)
 
-## Where Pipelines Live
+1. Runtime checks: `h3retik doctor`
+2. Start runtime: `h3retik up`
+3. Set target scope: `h3retik target set --kind custom --url http://127.0.0.1:8080`
+4. Launch operator loop: `h3retik` (or `h3retik tui`)
 
-- Dynamic module manifests: `modules/exploit/*.json`
-- Headless wrappers (Kali): `kali-headless/`
+Headless (non-interactive) alternative:
+
+- `h3retik pipeline --target http://127.0.0.1:8080 --profile standard --pipeline prelim`
+
+## “What You Configure” (Primary Control Primitives)
+
+In h3retik, the operator is not “configuring tools”; the operator is configuring the *operation*.
+
+1. Target scope (what is in-bounds)
+   - CLI: `h3retik target set --kind custom --url ...`
+   - Persisted state: `telemetry/state.json` (source of truth for active target)
+2. Operator action selection (what to do next)
+   - TUI: CTRL panel (mode-scoped actions + pipelines)
+   - Headless: `h3retik pipeline --pipeline <name> --profile <depth>`
+3. Module definitions (how actions run)
+   - Manifests: `modules/exploit/*.json`
+   - Each module is a command template + inputs + evidence contract.
+4. Evidence contract (how outputs become “findings/loot”)
+   - Streams: `telemetry/commands.jsonl`, `telemetry/findings.jsonl`, `telemetry/loot.jsonl`, `telemetry/exploits.jsonl`
+   - Files: `artifacts/` for captured raw/parsed outputs
+
+If you are asked “how do I drive it like a pro?”, the answer is: set scope → run a small pipeline → read telemetry → choose next action based on evidence and OPSEC.
+
+## Where Pipelines and Tools Live
+
+- Module manifests (operator actions): `modules/exploit/*.json`
+- Kali headless wrappers:
+  - OSINT: `kali-headless/osint-*`
+  - Onchain: `kali-headless/onchain-*`
 - Orchestrators:
-  - `scripts/security_pipeline.py`
-  - `scripts/observatory_runner.py`
-  - `scripts/targetctl.py`
+  - `scripts/security_pipeline.py` (named pipelines, module orchestration, telemetry writes)
+  - `scripts/observatory_runner.py` (lab harness / observatory mode)
+  - `scripts/targetctl.py` (target management)
 
-## Operating Model
+## Telemetry Contract (How to Read the Truth)
 
-- Keep target selection in `targetctl` / CTRL panel.
-- Fire mode-specific actions from CTRL.
-- Validate output via telemetry streams (`commands`, `findings`, `loot`).
-- Treat `loot` as extracted evidence, `pwned` as compromise/vulnerability evidence.
+All “what happened” should be derived from telemetry, not narrative.
+
+- `telemetry/commands.jsonl`: each executed command (started/ok/fail), exit code, duration, output preview.
+- `telemetry/findings.jsonl`: normalized vulnerability/condition findings (severity, title, impact, metadata).
+- `telemetry/loot.jsonl`: extracted evidence items (credentials, endpoints, files, artifacts, validated access, etc).
+- `telemetry/exploits.jsonl`: exploit-level classification records (when applicable).
+- `telemetry/state.json`: current target and runtime context; treat as the active operation “header”.
+
+Agent behavior rule: when you claim something is true (“creds fit”, “endpoint writable”, “admin access”), you must be able to point to a telemetry event that supports it.
+
+## Operating Loop (How to Behave as the Operator)
+
+1. Preflight
+   - Confirm scope and target URL from `telemetry/state.json` (or set via `h3retik target set ...`).
+   - Confirm runtime health via `h3retik doctor` and `kali-headless/*-stack-check` wrappers if needed.
+2. Evidence-first discovery
+   - Run a low-noise recon/surface pipeline first.
+   - Promote useful outputs to `loot` and `artifacts` so they become navigable in TUI.
+3. Branch deliberately
+   - Vulnerability sweep when recon suggests a feasible attack surface.
+   - Credential workflows only when RoE allows and there is a strong hypothesis (avoid “spray and pray”).
+4. Confirm access, then expand
+   - When you gain access, verify it with a minimally-invasive check and log that verification.
+   - Use follow-ups that are derived from loot (not hardcoded target assumptions).
+5. Bundle evidence
+   - Use evidence bundles (export artifacts + telemetry snapshot) for clean reporting/replay.
+
+## Extending h3retik (Adding Actions Without Hardcoding Targets)
+
+To add a new operator action:
+
+1. Create a new module JSON in `modules/exploit/` with:
+   - `command_template` using `{{target_url}}` and `{{input:...}}` variables
+   - `inputs` for operator-controlled parameters
+   - `evidence` fields to standardize what gets emitted to telemetry
+2. Ensure the action is safe by default:
+   - provide a conservative default (rate/threads/timeouts)
+   - mark OPSEC guidance in description/tags (even if the runtime also shows an OPSEC meter)
+
+Avoid:
+- embedding a specific host/path in templates (derive from `{{target_url}}` and discovered loot instead)
+- “magic” success assumptions without verification and telemetry
 
 ## Notes
 
-- Pipelines are target-agnostic; avoid target-specific assumptions.
-- Prefer module/pipeline execution before ad-hoc one-off commands.
-- Use OPSEC cues in TUI before noisy actions (bruteforce/tamper/write operations).
+- Pipelines should be target-agnostic: treat Juice Shop as a demo target, not a logic dependency.
+- Prefer module/pipeline execution before ad-hoc one-off commands so telemetry stays consistent.
+- Noisy actions (bruteforce, tamper/write, destructive edits) should be treated as explicit operator decisions with OPSEC awareness and evidence logging.
