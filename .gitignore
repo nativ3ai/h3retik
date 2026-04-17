@@ -1,0 +1,11 @@
+.DS_Store
+/juicetui
+bin/
+external/
+telemetry/**
+!telemetry/.gitkeep
+artifacts/**
+!artifacts/.gitkeep
+*.tmp
+__pycache__/
+*.pyc

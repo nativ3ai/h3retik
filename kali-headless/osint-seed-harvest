@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: osint-seed-harvest <target-domain> [limit]" >&2
+  exit 2
+fi
+
+target="$1"
+limit="${2:-250}"
+safe_target="$(echo "$target" | tr '/: ' '___')"
+out_base="/artifacts/osint/theharvester-${safe_target}"
+sources="${HARVESTER_SOURCES:-crtsh,anubis,hackertarget,rapiddns,urlscan}"
+
+mkdir -p /artifacts/osint
+
+echo "[osint] theHarvester seed=$target sources=$sources limit=$limit"
+exec theHarvester -d "$target" -b "$sources" -l "$limit" -f "$out_base"

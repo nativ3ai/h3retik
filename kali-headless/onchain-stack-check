@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+check_bin() {
+  local label="$1"
+  local cmd="$2"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    printf "[ok]   %-22s %s\n" "$label" "$(command -v "$cmd")"
+  else
+    printf "[miss] %-22s %s\n" "$label" "$cmd"
+  fi
+}
+
+check_bin "slither" slither
+check_bin "mythril" myth
+check_bin "solc" solc
+check_bin "forge" forge
+check_bin "cast" cast
+check_bin "anvil" anvil
+check_bin "echidna" echidna
+check_bin "medusa" medusa
+check_bin "halmos" halmos
+check_bin "onchain-slither" onchain-slither
+check_bin "onchain-mythril" onchain-mythril
+check_bin "onchain-foundry-check" onchain-foundry-check
+check_bin "onchain-echidna" onchain-echidna
+check_bin "onchain-medusa" onchain-medusa
+check_bin "onchain-halmos" onchain-halmos
+check_bin "onchain-rpc-check" onchain-rpc-check
+check_bin "onchain-rpc-catalog" onchain-rpc-catalog
+check_bin "onchain-address-flow" onchain-address-flow

@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${H3RETIK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo "0.0.1")"
+KALI_CONTAINER="${H3RETIK_KALI_CONTAINER:-jsbb-kali}"
+
+die() {
+  echo "h3retik: $*" >&2
+  exit 1
+}
+
+run_root() {
+  (cd "$ROOT" && "$@")
+}
+
+ensure_deps() {
+  command -v docker >/dev/null 2>&1 || die "docker is required"
+  command -v python3 >/dev/null 2>&1 || die "python3 is required"
+}
+
+ensure_tui() {
+  if [[ -x "$ROOT/bin/juicetui" ]]; then
+    return
+  fi
+  command -v go >/dev/null 2>&1 || die "go is required to build juicetui"
+  run_root go build -o bin/juicetui ./cmd/juicetui
+}
+
+usage() {
+  cat <<EOF
+h3retik v$VERSION
+
+Usage:
+  h3retik                          # start kali + launch TUI
+  h3retik tui                      # launch TUI
+  h3retik up                       # start/build kali container
+  h3retik down                     # stop stack
+  h3retik build                    # build TUI binary
+  h3retik build-kali               # build kali image
+  h3retik shell                    # interactive shell in kali
+  h3retik kali <cmd...>            # execute command in kali
+  h3retik target <args...>         # passthrough to scripts/targetctl.py
+  h3retik pipeline <args...>       # passthrough to scripts/security_pipeline.py
+  h3retik observatory <args...>    # passthrough to scripts/observatory_runner.py
+  h3retik reset                    # reset telemetry + custom target
+  h3retik doctor                   # quick environment + runtime checks
+  h3retik install                  # install global launcher in ~/.local/bin
+  h3retik version                  # print version
+  h3retik help                     # show this help
+EOF
+}
+
+cmd="${1:-tui}"
+case "$cmd" in
+  tui)
+    shift || true
+    ensure_deps
+    ensure_tui
+    run_root docker compose up -d kali
+    exec "$ROOT/bin/juicetui" "$@"
+    ;;
+  up)
+    ensure_deps
+    run_root docker compose up -d kali
+    ;;
+  down)
+    ensure_deps
+    run_root docker compose down
+    ;;
+  build)
+    ensure_tui
+    echo "built: $ROOT/bin/juicetui"
+    ;;
+  build-kali)
+    ensure_deps
+    run_root docker compose build kali
+    ;;
+  shell)
+    ensure_deps
+    run_root docker compose up -d kali
+    exec docker exec -it "$KALI_CONTAINER" bash
+    ;;
+  kali)
+    shift || true
+    ensure_deps
+    run_root docker compose up -d kali
+    if [[ $# -eq 0 ]]; then
+      exec docker exec -it "$KALI_CONTAINER" bash
+    fi
+    exec docker exec "$KALI_CONTAINER" bash -lc "$*"
+    ;;
+  target)
+    shift || true
+    ensure_deps
+    run_root python3 ./scripts/targetctl.py "$@"
+    ;;
+  pipeline)
+    shift || true
+    ensure_deps
+    run_root python3 ./scripts/security_pipeline.py "$@"
+    ;;
+  observatory)
+    shift || true
+    ensure_deps
+    run_root python3 ./scripts/observatory_runner.py "$@"
+    ;;
+  reset)
+    ensure_deps
+    run_root ./scripts/reset_lab.sh
+    ;;
+  doctor)
+    ensure_deps
+    echo "h3retik version: $VERSION"
+    echo "root: $ROOT"
+    if command -v go >/dev/null 2>&1; then
+      go version
+    else
+      echo "go: missing (required for build)"
+    fi
+    docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || die "docker daemon not reachable"
+    run_root docker compose up -d kali >/dev/null
+    docker exec "$KALI_CONTAINER" bash -lc 'osint-stack-check' || true
+    docker exec "$KALI_CONTAINER" bash -lc 'onchain-stack-check' || true
+    ;;
+  install)
+    shift || true
+    exec "$ROOT/scripts/install_h3retik.sh" "$@"
+    ;;
+  version)
+    echo "$VERSION"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage
+    die "unknown command: $cmd"
+    ;;
+esac

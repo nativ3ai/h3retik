@@ -1,0 +1,25 @@
+services:
+  kali:
+    image: h3retik/kali:v0.0.1
+    build:
+      context: .
+      dockerfile: Dockerfile.kali
+    container_name: jsbb-kali
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: ["/bin/bash", "-lc", "sleep infinity"]
+    networks:
+      - blackbox-lab
+      - juiceshop-blackbox
+    volumes:
+      - ./telemetry:/telemetry
+      - ./artifacts:/artifacts
+
+networks:
+  blackbox-lab:
+    name: blackbox-lab
+  juiceshop-blackbox:
+    external: true
+    name: juiceshop-blackbox

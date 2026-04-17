@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${1:-}"
+if [[ -z "$target" ]]; then
+  echo "usage: onchain-medusa <project-dir|target>" >&2
+  exit 2
+fi
+
+export PATH="/root/.local/bin:${PATH}"
+
+mkdir -p /artifacts/onchain
+safe="$(echo "$target" | tr '/: ' '___')"
+out="/artifacts/onchain/medusa-${safe}.txt"
+
+if ! command -v medusa >/dev/null 2>&1; then
+  echo "medusa not installed" >"$out"
+  cat "$out"
+  exit 0
+fi
+
+{
+  echo "[onchain] medusa target=$target"
+  if [[ -d "$target" ]]; then
+    medusa fuzz --compilation-target "$target" --timeout "${MEDUSA_TIMEOUT:-30}" --test-limit "${MEDUSA_TEST_LIMIT:-200}"
+  else
+    echo "medusa expects a project directory; got '$target'"
+  fi
+} >"$out" 2>&1 || true
+
+cat "$out"
+echo "[onchain] artifact=$out"

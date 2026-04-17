@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+check_bin() {
+  local label="$1"
+  local cmd="$2"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    printf "[ok]   %-22s %s\n" "$label" "$(command -v "$cmd")"
+  else
+    printf "[miss] %-22s %s\n" "$label" "$cmd"
+  fi
+}
+
+check_bin "theHarvester" theHarvester
+check_bin "bbot" bbot
+check_bin "recon-ng" recon-ng
+check_bin "osint-rengine wrapper" osint-rengine
+check_bin "osint-spiderfoot wrapper" osint-deep-spiderfoot
+check_bin "osint-seed-harvest" osint-seed-harvest
+check_bin "osint-reconng" osint-reconng
+
+if [[ -x /opt/spiderfoot-venv/bin/python && -f /opt/spiderfoot/sf.py ]]; then
+  echo "[ok]   spiderfoot runtime       /opt/spiderfoot + /opt/spiderfoot-venv"
+else
+  echo "[miss] spiderfoot runtime       /opt/spiderfoot + /opt/spiderfoot-venv"
+fi
+
+if [[ -x /opt/rengine-venv/bin/python && -d /opt/rengine ]]; then
+  echo "[ok]   rengine source+venv      /opt/rengine + /opt/rengine-venv"
+else
+  echo "[miss] rengine source+venv      /opt/rengine + /opt/rengine-venv"
+fi

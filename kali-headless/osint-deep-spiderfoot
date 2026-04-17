@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sf_py="/opt/spiderfoot/sf.py"
+sf_python="/opt/spiderfoot-venv/bin/python"
+
+if [[ ! -x "$sf_python" || ! -f "$sf_py" ]]; then
+  echo "spiderfoot runtime missing (expected $sf_python and $sf_py)" >&2
+  exit 1
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "usage: osint-deep-spiderfoot <target> [module-csv]" >&2
+  echo "   or: osint-deep-spiderfoot <raw sf.py args...>" >&2
+  exit 2
+fi
+
+if [[ "${1:0:1}" == "-" ]]; then
+  exec "$sf_python" "$sf_py" "$@"
+fi
+
+target="$1"
+modules="${2:-sfp_dnsresolve,sfp_dnscommonsrv,sfp_crt,sfp_dnsbrute,sfp_webframework,sfp_sslcert}"
+
+exec "$sf_python" "$sf_py" -s "$target" -m "$modules" -o json

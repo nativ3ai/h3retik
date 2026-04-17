@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${1:-}"
+if [[ -z "$target" ]]; then
+  echo "usage: onchain-echidna <solidity-file|project-dir>" >&2
+  exit 2
+fi
+
+export PATH="/root/.local/bin:${PATH}"
+
+mkdir -p /artifacts/onchain
+safe="$(echo "$target" | tr '/: ' '___')"
+out="/artifacts/onchain/echidna-${safe}.txt"
+
+if ! command -v echidna >/dev/null 2>&1; then
+  echo "echidna not installed" >"$out"
+  cat "$out"
+  exit 0
+fi
+
+{
+  echo "[onchain] echidna target=$target"
+  if [[ -f "$target" ]]; then
+    echidna "$target"
+  elif [[ -d "$target" ]]; then
+    echo "directory target provided; run with explicit contract file/config for deterministic campaign"
+  else
+    echo "target not found: $target"
+  fi
+} >"$out" 2>&1 || true
+
+cat "$out"
+echo "[onchain] artifact=$out"

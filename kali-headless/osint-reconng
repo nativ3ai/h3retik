@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace="${RECON_NG_WORKSPACE:-default}"
+
+if [[ $# -eq 0 ]]; then
+  cat >&2 <<'EOF'
+usage:
+  osint-reconng "<recon-ng commands separated by ;>"
+example:
+  osint-reconng "marketplace install all; modules load recon/domains-hosts/bing_domain_web; options set SOURCE example.com; run"
+EOF
+  exit 2
+fi
+
+exec recon-ng -w "$workspace" -C "$1"

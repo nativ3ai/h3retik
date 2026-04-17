@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: osint-deep-bbot <target-domain> [extra bbot args...]" >&2
+  exit 2
+fi
+
+target="$1"
+shift || true
+
+mkdir -p /artifacts/osint
+
+exec bbot -t "$target" -p subdomain-enum "$@"

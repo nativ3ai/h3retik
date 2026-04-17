@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${1:-}"
+if [[ -z "$target" ]]; then
+  echo "usage: onchain-mythril <solidity-file|bytecode-file|contract-address>" >&2
+  exit 2
+fi
+
+mkdir -p /artifacts/onchain
+safe="$(echo "$target" | tr '/: ' '___')"
+out="/artifacts/onchain/mythril-${safe}.txt"
+
+echo "[onchain] mythril target=$target output=$out"
+if [[ -f "$target" ]]; then
+  if [[ "$target" == *.sol ]] && command -v solc >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    tmp_json="$(mktemp)"
+    if solc --combined-json bin-runtime "$target" >"$tmp_json" 2>/dev/null; then
+      bytecode="$(jq -r '.contracts | to_entries[] | .value["bin-runtime"] // empty | select(length>0)' "$tmp_json" | head -n 1)"
+      if [[ -n "$bytecode" ]]; then
+        myth analyze -c "0x$bytecode" >"$out" 2>&1 || true
+      else
+        myth analyze "$target" >"$out" 2>&1 || true
+      fi
+    else
+      myth analyze "$target" >"$out" 2>&1 || true
+    fi
+    rm -f "$tmp_json"
+  else
+    myth analyze "$target" >"$out" 2>&1 || true
+  fi
+elif [[ "$target" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+  if [[ -n "${MYTH_RPC_URL:-}" ]]; then
+    if command -v cast >/dev/null 2>&1; then
+      bytecode="$(cast code --rpc-url "$MYTH_RPC_URL" "$target" 2>/dev/null || true)"
+      if [[ -n "$bytecode" && "$bytecode" != "0x" ]]; then
+        myth analyze -c "$bytecode" >"$out" 2>&1 || true
+      else
+        {
+          echo "address target detected: $target"
+          echo "failed to fetch runtime bytecode from MYTH_RPC_URL=$MYTH_RPC_URL"
+        } >"$out"
+      fi
+    else
+      {
+        echo "address target detected: $target"
+        echo "cast not installed; cannot fetch bytecode from MYTH_RPC_URL"
+      } >"$out"
+    fi
+  else
+    {
+      echo "address target detected: $target"
+      echo "set MYTH_RPC_URL to fetch runtime bytecode and run myth analyze -c"
+    } >"$out"
+  fi
+else
+  {
+    echo "unsupported target: $target"
+    echo "pass solidity file, bytecode file, or 0x address"
+  } >"$out"
+fi
+
+cat "$out"
+echo "[onchain] artifact=$out"

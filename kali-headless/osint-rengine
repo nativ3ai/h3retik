@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir="/opt/rengine"
+venv_python="/opt/rengine-venv/bin/python"
+base="${RENGINE_API_URL:-}"
+api_key="${RENGINE_API_KEY:-}"
+
+mode="${1:-status}"
+shift || true
+
+auth_header=()
+if [[ -n "$api_key" ]]; then
+  auth_header=(-H "Authorization: Token ${api_key}")
+fi
+
+local_runtime_ok() {
+  [[ -d "$repo_dir" && -x "$venv_python" ]]
+}
+
+require_remote_api() {
+  if [[ -z "$base" ]]; then
+    cat >&2 <<'EOF'
+RENGINE_API_URL is not set.
+Example:
+  export RENGINE_API_URL="http://host.docker.internal:8000"
+  export RENGINE_API_KEY="<token>"
+  osint-rengine api /api/listTargets/
+EOF
+    exit 2
+  fi
+}
+
+case "$mode" in
+  local-status)
+    if local_runtime_ok; then
+      echo "[ok] reNgine source + venv scaffold present in image"
+      echo "repo: $repo_dir"
+      echo "python: $venv_python"
+      echo "note: use remote API mode unless you run the full reNgine stack separately"
+    else
+      echo "[miss] local reNgine runtime not found in image" >&2
+      exit 1
+    fi
+    ;;
+  status)
+    require_remote_api
+    exec curl -fsS "${auth_header[@]}" "${base%/}/api/"
+    ;;
+  api)
+    require_remote_api
+    path="${1:-}"
+    if [[ -z "$path" ]]; then
+      echo "usage: osint-rengine api <path> [curl-args...]" >&2
+      exit 2
+    fi
+    shift || true
+    exec curl -fsS "${auth_header[@]}" "${base%/}${path}" "$@"
+    ;;
+  *)
+    echo "unsupported mode: $mode (use: local-status|status|api)" >&2
+    exit 2
+    ;;
+esac

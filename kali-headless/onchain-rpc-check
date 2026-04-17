@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+network="${1:-eth-mainnet}"
+
+rpc_candidates=()
+case "$network" in
+  eth-mainnet) expected_chain_id="1"; rpc_candidates=("https://ethereum-rpc.publicnode.com" "https://eth.llamarpc.com" "https://cloudflare-eth.com") ;;
+  eth-sepolia) expected_chain_id="11155111"; rpc_candidates=("https://ethereum-sepolia-rpc.publicnode.com" "https://rpc.sepolia.org") ;;
+  base-mainnet) expected_chain_id="8453"; rpc_candidates=("https://base-rpc.publicnode.com" "https://base.llamarpc.com" "https://mainnet.base.org") ;;
+  base-sepolia) expected_chain_id="84532"; rpc_candidates=("https://base-sepolia-rpc.publicnode.com" "https://sepolia.base.org") ;;
+  polygon-mainnet) expected_chain_id="137"; rpc_candidates=("https://polygon-bor-rpc.publicnode.com" "https://polygon.llamarpc.com" "https://polygon-rpc.com") ;;
+  polygon-amoy) expected_chain_id="80002"; rpc_candidates=("https://polygon-amoy-bor-rpc.publicnode.com") ;;
+  arbitrum-mainnet) expected_chain_id="42161"; rpc_candidates=("https://arbitrum-one-rpc.publicnode.com" "https://arbitrum.llamarpc.com" "https://arb1.arbitrum.io/rpc") ;;
+  arbitrum-sepolia) expected_chain_id="421614"; rpc_candidates=("https://arbitrum-sepolia-rpc.publicnode.com") ;;
+  optimism-mainnet) expected_chain_id="10"; rpc_candidates=("https://optimism-rpc.publicnode.com" "https://optimism.llamarpc.com" "https://mainnet.optimism.io") ;;
+  optimism-sepolia) expected_chain_id="11155420"; rpc_candidates=("https://optimism-sepolia-rpc.publicnode.com") ;;
+  *)
+    echo "unsupported network key: $network" >&2
+    exit 2
+    ;;
+esac
+
+rpc=""
+actual_hex=""
+actual_dec=""
+
+for candidate in "${rpc_candidates[@]}"; do
+  probe_hex="$(curl -fsS -m 12 -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' "$candidate" \
+    | jq -r '.result // empty' || true)"
+  probe_hex="$(echo "$probe_hex" | tr -d '"' | tr -d '[:space:]')"
+  if [[ -z "$probe_hex" ]]; then
+    echo "[onchain] rpc probe failed: $candidate"
+    continue
+  fi
+  probe_dec="$(cast to-dec "$probe_hex" 2>/dev/null || true)"
+  if [[ "$probe_dec" == "$expected_chain_id" ]]; then
+    rpc="$candidate"
+    actual_hex="$probe_hex"
+    actual_dec="$probe_dec"
+    break
+  fi
+  echo "[onchain] rpc chain mismatch: $candidate chain_id=$probe_dec expected=$expected_chain_id"
+done
+
+if [[ -z "$rpc" ]]; then
+  echo "[err] no reachable RPC endpoint matched expected chain id for $network" >&2
+  exit 1
+fi
+
+echo "[onchain] network=$network expected_chain_id=$expected_chain_id rpc=$rpc"
+echo "[onchain] chain_id_hex=$actual_hex chain_id_dec=$actual_dec"
+
+if [[ "$actual_dec" != "$expected_chain_id" ]]; then
+  echo "[warn] chain id mismatch expected=$expected_chain_id actual=$actual_dec" >&2
+fi
+
+latest_block="$(cast block-number --rpc-url "$rpc")"
+echo "[onchain] latest_block=$latest_block"

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${1:-}"
+if [[ -z "$target" ]]; then
+  echo "usage: onchain-halmos <project-dir|test-spec>" >&2
+  exit 2
+fi
+
+mkdir -p /artifacts/onchain
+safe="$(echo "$target" | tr '/: ' '___')"
+out="/artifacts/onchain/halmos-${safe}.txt"
+
+if ! command -v halmos >/dev/null 2>&1; then
+  echo "halmos not installed" >"$out"
+  cat "$out"
+  exit 0
+fi
+
+solver="${HALMOS_SOLVER:-z3}"
+
+{
+  echo "[onchain] halmos target=$target"
+  echo "[onchain] halmos solver=$solver"
+  if [[ -d "$target" || -f "$target" ]]; then
+    if [[ -d "$target" ]]; then
+      halmos --solver "$solver" --root "$target"
+    else
+      halmos --solver "$solver" "$target"
+    fi
+  else
+    echo "target not found: $target"
+  fi
+} >"$out" 2>&1 || true
+
+cat "$out"
+echo "[onchain] artifact=$out"

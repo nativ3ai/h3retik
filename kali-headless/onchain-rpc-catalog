@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+format="${1:-table}"
+
+rows=(
+  "eth-mainnet|Ethereum Mainnet|1|mainnet|https://ethereum-rpc.publicnode.com,https://eth.llamarpc.com,https://cloudflare-eth.com"
+  "eth-sepolia|Ethereum Sepolia|11155111|testnet|https://ethereum-sepolia-rpc.publicnode.com,https://rpc.sepolia.org"
+  "base-mainnet|Base Mainnet|8453|mainnet|https://base-rpc.publicnode.com,https://base.llamarpc.com,https://mainnet.base.org"
+  "base-sepolia|Base Sepolia|84532|testnet|https://base-sepolia-rpc.publicnode.com,https://sepolia.base.org"
+  "polygon-mainnet|Polygon Mainnet|137|mainnet|https://polygon-bor-rpc.publicnode.com,https://polygon.llamarpc.com,https://polygon-rpc.com"
+  "polygon-amoy|Polygon Amoy|80002|testnet|https://polygon-amoy-bor-rpc.publicnode.com"
+  "arbitrum-mainnet|Arbitrum One|42161|mainnet|https://arbitrum-one-rpc.publicnode.com,https://arbitrum.llamarpc.com,https://arb1.arbitrum.io/rpc"
+  "arbitrum-sepolia|Arbitrum Sepolia|421614|testnet|https://arbitrum-sepolia-rpc.publicnode.com"
+  "optimism-mainnet|Optimism Mainnet|10|mainnet|https://optimism-rpc.publicnode.com,https://optimism.llamarpc.com,https://mainnet.optimism.io"
+  "optimism-sepolia|Optimism Sepolia|11155420|testnet|https://optimism-sepolia-rpc.publicnode.com"
+)
+
+if [[ "$format" == "--json" || "$format" == "json" ]]; then
+  printf '[\n'
+  for i in "${!rows[@]}"; do
+    IFS='|' read -r key label chain_id family rpc <<<"${rows[$i]}"
+    comma=","
+    if [[ "$i" -eq "$((${#rows[@]} - 1))" ]]; then
+      comma=""
+    fi
+    printf '  {"key":"%s","label":"%s","chain_id":%s,"family":"%s","rpc":"%s"}%s\n' \
+      "$key" "$label" "$chain_id" "$family" "$rpc" "$comma"
+  done
+  printf ']\n'
+  exit 0
+fi
+
+printf '[onchain] built-in public RPC catalog\n'
+printf '%-20s %-20s %-10s %-10s %s\n' "key" "label" "chain_id" "family" "rpc_urls"
+printf '%-20s %-20s %-10s %-10s %s\n' "--------------------" "--------------------" "----------" "----------" "----------------------------------------"
+for row in "${rows[@]}"; do
+  IFS='|' read -r key label chain_id family rpc <<<"$row"
+  printf '%-20s %-20s %-10s %-10s %s\n' "$key" "$label" "$chain_id" "$family" "$rpc"
+done

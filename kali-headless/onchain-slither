@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${1:-}"
+if [[ -z "$target" ]]; then
+  echo "usage: onchain-slither <project-dir|solidity-file|repo-path>" >&2
+  exit 2
+fi
+
+mkdir -p /artifacts/onchain
+safe="$(echo "$target" | tr '/: ' '___')"
+out="/artifacts/onchain/slither-${safe}.json"
+
+if [[ -f "$target" || -d "$target" ]]; then
+  echo "[onchain] slither target=$target json=$out"
+  slither "$target" --json "$out" || slither "$target"
+  echo "[onchain] artifact=$out"
+  exit 0
+fi
+
+echo "[onchain] slither expects local source path/file; got '$target'"
+echo "[onchain] tip: mount or clone contract source into container and pass path"
+

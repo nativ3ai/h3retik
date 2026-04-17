@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${1:-.}"
+network="${2:-mainnet}"
+
+mkdir -p /artifacts/onchain
+safe="$(echo "$target" | tr '/: ' '___')"
+out="/artifacts/onchain/foundry-${safe}.txt"
+
+{
+  echo "[onchain] forge version: $(forge --version 2>/dev/null || echo missing)"
+  echo "[onchain] cast version:  $(cast --version 2>/dev/null || echo missing)"
+  echo "[onchain] anvil version: $(anvil --version 2>/dev/null || echo missing)"
+  if [[ -d "$target" && -f "$target/foundry.toml" ]]; then
+    echo "[onchain] foundry project detected at $target"
+    (cd "$target" && forge build && forge test -vv)
+  else
+    echo "[onchain] no foundry project at '$target' (expected foundry.toml)"
+    echo "[onchain] network profile: $network"
+  fi
+} >"$out" 2>&1 || true
+
+cat "$out"
+echo "[onchain] artifact=$out"
+
