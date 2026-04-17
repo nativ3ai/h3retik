@@ -1,6 +1,6 @@
 # h3retik v0.0.1
 
-SOTA-oriented red teaming operations cockpit: headless Kali execution + gamified TUI + evidence-first telemetry.
+SOTA red teaming operations cockpit: headless Kali execution + gamified TUI + evidence-first telemetry.
 
 ```text
                             ,--.
@@ -30,12 +30,39 @@ SOTA-oriented red teaming operations cockpit: headless Kali execution + gamified
               ^^\..___,.--`
 ```
 
-## Why h3retik
+## What It Does
+
+- Runs exploit, OSINT, and onchain operations from one keyboard-first control plane.
+- Executes every operator action as reproducible headless CLI commands (`kali` or `local`).
+- Captures operation state as structured telemetry (`commands`, `findings`, `loot`, `exploits`).
+- Turns raw evidence into operator workflow views (`OPS`, `PWNED`, `LOOT`, `MAP`) with OPSEC cues.
+
+## SOTA Positioning
 
 - **Operator-first UX**: fast keyboard navigation, mode-scoped control (`exploit`, `osint`, `onchain`), live telemetry.
 - **Headless by default**: every action resolves to CLI execution (`kali` or `local`) with reproducible command trails.
 - **Target-agnostic execution**: pipelines/modules run from target URL + discovered evidence, not hardcoded app logic.
 - **Gamified clarity**: attack-degree maps, OPSEC meters, compromise posture, and guided next-best actions.
+
+## SOTA Comparison (Peer OSS Tools vs h3retik)
+
+Verification source: public upstream repository descriptions (snapshot checked on **2026-04-17**).
+
+| Repo / Tool | Official focus (upstream) | Exploit ops | OSINT ops | Onchain ops | Unified TUI cockpit | Telemetry-first evidence bus | Preconfigured Kali runtime |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `rapid7/metasploit-framework` | Metasploit Framework | ✅ | ❌ | ❌ | ❌ | ⚠️ Partial | ❌ |
+| `infobyte/faraday` | Open Source Vulnerability Management Platform | ⚠️ Partial | ❌ | ❌ | ❌ | ✅ | ❌ |
+| `owasp-amass/amass` | In-depth attack surface mapping and asset discovery | ❌ | ✅ | ❌ | ❌ | ⚠️ Partial | ❌ |
+| `smicallef/spiderfoot` | Automates OSINT for threat intelligence and attack surface mapping | ❌ | ✅ | ❌ | ❌ | ⚠️ Partial | ❌ |
+| `lanmaster53/recon-ng` | OSINT gathering from open sources | ❌ | ✅ | ❌ | ❌ | ⚠️ Partial | ❌ |
+| `crytic/slither` | Static analyzer for Solidity/Vyper | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `ConsenSysDiligence/mythril` | Symbolic security analysis for EVM bytecode | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **`nativ3ai/h3retik`** | **SOTA multi-domain operator cockpit** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+Legend:
+- ✅ native in core workflow
+- ⚠️ partial/adjacent capability
+- ❌ not a core capability
 
 ## One-Liner Install
 
