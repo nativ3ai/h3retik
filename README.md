@@ -27,11 +27,11 @@ SOTA red teaming operations cockpit: headless Kali execution, gamified operator 
      \_  \          /,L]     /
        '-_~-,       ` `   ./`
           `'{_            )
-              ^^\..___,.--`
+              ^^\..h3retik
 ```
 
 ## What It Does
-
+- Gamifies redteaming hacking opex through an intuitive TUI
 - Runs exploit, OSINT, and onchain workflows from one keyboard-first control plane.
 - Executes operator actions as reproducible headless CLI commands (`kali` or `local`).
 - Captures structured evidence in telemetry streams (`commands`, `findings`, `loot`, `exploits`).
