@@ -44,23 +44,37 @@ SOTA red teaming operations cockpit: headless Kali execution, gamified operator 
 - Unified runtime: packaged Kali + wrappers + modular pipelines.
 - Gamified but professional UX for real operations tempo.
 
-### Peer Framework Comparison
+### Peer Feature Baseline (Operator-Relevant)
 
-Verification source: public upstream repository descriptions (snapshot checked on **2026-04-17**).
+Verification source: public upstream repository docs/readmes (snapshot checked on **2026-04-17**).
 
-| Repo / Tool | Official focus (upstream) | Unified exploit+OSINT+onchain cockpit | Built-in gamified TUI ops loop | Structured multi-stream telemetry bus | Preconfigured Kali runtime + wrappers |
-|---|---|---:|---:|---:|---:|
-| `PurpleAILAB/Decepticon` | Autonomous Hacking Agent for Red Team Testing | No | No | No | No |
-| `rapid7/metasploit-framework` | Metasploit Framework | No | No | Partial | No |
-| `mitre/caldera` | Automated Adversary Emulation Platform | No | No | Partial | No |
-| `infobyte/faraday` | Open Source Vulnerability Management Platform | No | No | Yes | No |
-| `owasp-amass/amass` | In-depth attack surface mapping and asset discovery | No | No | Partial | No |
-| `smicallef/spiderfoot` | OSINT automation for threat intelligence and attack-surface mapping | No | No | Partial | No |
-| **`nativ3ai/h3retik`** | **SOTA multi-domain red teaming cockpit** | **Yes** | **Yes** | **Yes** | **Yes** |
+| Professional red-team feature | `PurpleAILAB/Decepticon` | `rapid7/metasploit-framework` | `mitre/caldera` | `infobyte/faraday` | **`nativ3ai/h3retik`** |
+|---|---:|---:|---:|---:|---:|
+| Exploit module ecosystem (built-in) | Partial | Yes | Partial | No | Partial |
+| Adversary emulation / kill-chain orchestration | Yes | Partial | Yes | No | Partial |
+| C2 / agent management in-core | Partial | Partial | Yes | No | No |
+| Credential attack workflows (online/offline) | Partial | Yes | Partial | No | Yes |
+| Operator-in-the-loop UX (fast steering) | Partial | Partial | Partial | Yes | **Yes** |
+| Evidence capture for later reporting/audit | Partial | Partial | Partial | Yes | **Yes** |
+| Multi-tool unification into one loop | Partial | Partial | Partial | Partial | **Yes** |
+| Preconfigured Kali runtime + wrappers | No | No | No | No | **Yes** |
+| Integrated OSINT lane in same runtime | No | No | No | No | **Yes** |
+| Integrated onchain lane in same runtime | No | No | No | No | **Yes** |
 
 Notes:
-- Comparison is at repository workflow level, not isolated tool capability level.
-- h3retik unifies these domains in one operational runtime.
+- `Yes` = ships as a first-class, default workflow in the core project/runtime.
+- `Partial` = achievable via plugins/manual composition/integration, but not the default operator loop.
+- This table compares “what a working operator gets out of the box”, not what can be built with enough glue.
+
+### What You Configure (Primitives)
+
+| Repo / Tool | Primary configuration primitive (what operators actually edit / drive) |
+|---|---|
+| `PurpleAILAB/Decepticon` | Engagement plan + agent configuration (kill-chain automation driven from a run plan) |
+| `rapid7/metasploit-framework` | Modules, payload options, resource scripts (`.rc`), sessions/workspaces |
+| `mitre/caldera` | Abilities/TTPs + operations/tasking + plugins (server + agent C2 configuration) |
+| `infobyte/faraday` | Projects + imports/normalization + reporting/dashboard configuration |
+| **`nativ3ai/h3retik`** | Target scope + operator pipelines + evidence/telemetry streams (`telemetry/*.jsonl`, `telemetry/state.json`) |
 
 ## One-Liner Install
 
@@ -83,6 +97,16 @@ export PATH="$HOME/.local/bin:$PATH"
 h3retik up
 h3retik
 ```
+
+Optional agent skill wiring (for agent runtimes that support local skills):
+
+```bash
+mkdir -p ~/.codex/skills/h3retik
+ln -sf "$(pwd)/SKILL.md" ~/.codex/skills/h3retik/SKILL.md
+```
+
+- Local skill source: [`SKILL.md`](SKILL.md)
+- Optional remote skill source: `https://raw.githubusercontent.com/nativ3ai/h3retik/main/SKILL.md`
 
 ## Command Surface
 
