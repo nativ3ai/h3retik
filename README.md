@@ -78,10 +78,10 @@ Notes:
 
 ## One-Liner Install
 
-### Local repo one-liner
+### Source install one-liner (global path)
 
 ```bash
-bash -lc 'cd /Users/native/Desktop/heretic/juiceshop-blackbox && ./scripts/install_h3retik.sh && export PATH="$HOME/.local/bin:$PATH" && h3retik up && h3retik'
+bash -lc 'SRC="${H3RETIK_SRC_DIR:-$HOME/.local/src/h3retik}"; rm -rf "$SRC"; git clone https://github.com/nativ3ai/h3retik.git "$SRC" && cd "$SRC" && ./scripts/install_h3retik.sh && export PATH="$HOME/.local/bin:$PATH" && h3retik up && h3retik'
 ```
 
 ### GitHub bootstrap one-liner
