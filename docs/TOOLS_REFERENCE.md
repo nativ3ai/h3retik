@@ -2,6 +2,22 @@
 
 This document lists the preinstalled h3retik Kali toolset and what each tool is used for.
 
+## Runtime Requirements (Must-Have For Full TUI)
+
+If you attach h3retik to your own Kali container/image, these are the minimum requirements for full feature parity:
+
+- Base: `bash`, `python3`, `curl`, `jq`, `git`.
+- Exploit core: `nmap`, `ffuf`, `nikto`, `sqlmap`, `hydra`, `medusa`, `nuclei`, `msfconsole`.
+- OSINT wrappers: `osint-seed-harvest`, `osint-deep-bbot` or `osint-deep-spiderfoot`, `osint-reconng`, `osint-rengine`, `osint-stack-check`.
+- Onchain wrappers: `onchain-rpc-catalog`, `onchain-rpc-check`, `onchain-address-flow`, `onchain-slither`, `onchain-mythril`, `onchain-foundry-check`, `onchain-echidna`, `onchain-medusa`, `onchain-halmos`, `onchain-stack-check`.
+- Co-op wrappers: `coop-caldera-check`, `coop-caldera-up`, `coop-caldera-status`, `coop-caldera-api`, `coop-caldera-op-report`, `coop-caldera-stop`.
+
+Behavior in TUI:
+
+- FIRE menus are capability-aware when Kali runtime is online.
+- Actions requiring missing Kali tools are filtered/locked and not shown as runnable.
+- Runtime container/image can be switched in `CTRL -> TARGET` without restarting the TUI process.
+
 ## 1) Runtime and Build Tooling
 
 | Tool | Purpose |
@@ -161,4 +177,3 @@ These wrappers are the preferred, stable entry points for TUI/CLI pipelines.
 - Tool presence does not imply automatic execution; actions run only when operator fires commands.
 - Scope and authorization remain operator responsibility.
 - For repeatable operations, prefer wrappers/pipelines over ad hoc shell commands.
-

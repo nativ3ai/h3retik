@@ -270,8 +270,14 @@ Runtime resolution:
 
 - Default execution path uses compose service `kali` container.
 - Override container name with `H3RETIK_KALI_CONTAINER`.
+- Override compose image with `H3RETIK_KALI_IMAGE`.
 - If `jsbb-kali` already exists and is running, `h3retik` reuses it automatically.
 - Use `H3RETIK_SKIP_UP=1` to attach to an existing running container and skip compose startup.
+- Use `h3retik attach` to launch TUI against an existing running container only.
+- In TUI, runtime can be changed live in `CTRL -> TARGET`:
+  - `KALI Runtime Container (Type)`
+  - `KALI Runtime Image (Type)`
+- FIRE actions are capability-aware: when Kali is running, commands requiring missing tools are filtered from action menus.
 
 ## 8) End-to-End Operator Flow (Recommended)
 
@@ -320,6 +326,12 @@ Attach to existing Kali container:
 export H3RETIK_KALI_CONTAINER=my-kali
 export H3RETIK_SKIP_UP=1
 h3retik tui
+```
+
+Single-command attach:
+
+```bash
+h3retik --kali-container my-kali attach
 ```
 
 If the default `jsbb-kali` container is already running, plain `h3retik` is enough.

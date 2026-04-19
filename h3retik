@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="${H3RETIK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo "0.0.3")"
 KALI_CONTAINER="${H3RETIK_KALI_CONTAINER:-jsbb-kali}"
+KALI_IMAGE="${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.3}"
 
 die() {
   echo "h3retik: $*" >&2
@@ -46,8 +47,10 @@ usage() {
 h3retik v$VERSION
 
 Usage:
+  h3retik [--kali-container NAME] [--kali-image TAG] [--skip-up]
   h3retik                          # start kali + launch TUI
   h3retik tui                      # launch TUI
+  h3retik attach                   # launch TUI attached to existing kali container only
   h3retik up                       # start/build kali container
   h3retik down                     # stop stack
   h3retik build                    # build TUI binary
@@ -71,6 +74,41 @@ Env overrides:
 EOF
 }
 
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --kali-container)
+      [[ $# -ge 2 ]] || die "--kali-container requires a value"
+      KALI_CONTAINER="$2"
+      export H3RETIK_KALI_CONTAINER="$KALI_CONTAINER"
+      shift 2
+      ;;
+    --kali-image)
+      [[ $# -ge 2 ]] || die "--kali-image requires a value"
+      KALI_IMAGE="$2"
+      export H3RETIK_KALI_IMAGE="$KALI_IMAGE"
+      shift 2
+      ;;
+    --skip-up)
+      export H3RETIK_SKIP_UP=1
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unknown option: $1"
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
 cmd="${1:-tui}"
 case "$cmd" in
   tui)
@@ -80,6 +118,17 @@ case "$cmd" in
     if [[ "${H3RETIK_SKIP_UP:-0}" != "1" ]]; then
       ensure_kali_runtime
     fi
+    exec "$ROOT/bin/juicetui" "$@"
+    ;;
+  attach)
+    shift || true
+    ensure_deps
+    ensure_tui
+    docker inspect "$KALI_CONTAINER" >/dev/null 2>&1 || die "container not found: $KALI_CONTAINER (use 'h3retik up' for fresh runtime)"
+    if ! docker inspect -f '{{.State.Running}}' "$KALI_CONTAINER" 2>/dev/null | grep -qi true; then
+      die "container is not running: $KALI_CONTAINER (start it or run 'h3retik up')"
+    fi
+    export H3RETIK_SKIP_UP=1
     exec "$ROOT/bin/juicetui" "$@"
     ;;
   up)

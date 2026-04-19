@@ -125,6 +125,9 @@ ln -sf "$(pwd)/SKILL.md" ~/.codex/skills/h3retik/SKILL.md
 
 ```bash
 h3retik                          # start kali + launch TUI
+h3retik attach                   # attach TUI to existing running kali container (no compose up)
+h3retik --kali-container my-kali tui
+h3retik --kali-image my/kali:tag up
 h3retik up                       # start/build kali service
 h3retik down                     # stop stack
 h3retik build-kali               # build kali image
@@ -146,6 +149,12 @@ export H3RETIK_SKIP_UP=1
 h3retik tui
 ```
 
+Or with one command:
+
+```bash
+h3retik --kali-container <your-kali-container> attach
+```
+
 For the default container name, no extra flag is needed if `jsbb-kali` is already running:
 
 ```bash
@@ -159,9 +168,17 @@ export H3RETIK_KALI_IMAGE=<custom-image-tag>
 h3retik up
 ```
 
+Equivalent one-shot flag:
+
+```bash
+h3retik --kali-image <custom-image-tag> up
+```
+
 Important:
 - Some actions fail if your external Kali image does not include required wrappers/packages.
 - Required wrappers are documented in `docs/CAPABILITIES.md` (`osint-*`, `onchain-*`, `coop-*`).
+- `CTRL` runtime can be changed in-TUI: `TARGET -> KALI Runtime Container (Type)` and `TARGET -> KALI Runtime Image (Type)`.
+- FIRE options are capability-aware: missing Kali tools are filtered/locked so non-runnable commands are not presented as ready.
 
 Minimum compatibility checklist for external Kali images:
 - Base runtime: `bash`, `python3`, `curl`, `jq`, `git`.

@@ -59,7 +59,9 @@ Co-op/C2 fast path in TUI:
 Existing compatible Kali container:
 
 - `H3RETIK_KALI_CONTAINER=<name> H3RETIK_SKIP_UP=1 h3retik tui`
+- `h3retik --kali-container <name> attach` (equivalent one-shot attach)
 - If `jsbb-kali` already exists and is running, plain `h3retik` will attach to it automatically.
+- Compose image can be swapped per command: `h3retik --kali-image <tag> up`.
 
 Headless (non-interactive) alternative:
 
@@ -95,6 +97,10 @@ If you are asked “how do I drive it like a pro?”, the answer is: set scope �
   - `scripts/security_pipeline.py` (named pipelines, module orchestration, telemetry writes)
   - `scripts/observatory_runner.py` (lab harness / observatory mode)
   - `scripts/targetctl.py` (target management)
+- Runtime controls from TUI:
+  - `CTRL -> TARGET -> KALI Runtime Container (Type)`
+  - `CTRL -> TARGET -> KALI Runtime Image (Type)`
+  - FIRE actions are capability-aware and hide/lock missing-tool commands when runtime is online.
 
 ## Telemetry Contract (How to Read the Truth)
 

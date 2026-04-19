@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -112,6 +113,18 @@ type controlAction struct {
 	Requires    []string
 	ModuleID    string
 	Evidence    attackModuleEvidence
+}
+
+var (
+	kaliToolCacheMu sync.Mutex
+	kaliToolCache   = map[string]bool{}
+	kaliStateMu     sync.Mutex
+	kaliStateCache  = map[string]kaliRuntimeState{}
+)
+
+type kaliRuntimeState struct {
+	Running bool
+	Checked time.Time
 }
 
 type attackModule struct {
@@ -685,6 +698,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.controlStatus = "manual OSINT input canceled"
 				} else if strings.EqualFold(m.manualTargetKind, "onchain") {
 					m.controlStatus = "manual ONCHAIN input canceled"
+				} else if strings.EqualFold(m.manualTargetKind, "kali-container") {
+					m.controlStatus = "manual kali container input canceled"
+				} else if strings.EqualFold(m.manualTargetKind, "kali-image") {
+					m.controlStatus = "manual kali image input canceled"
 				} else if strings.EqualFold(m.manualTargetKind, "coop-url") {
 					m.controlStatus = "manual CO-OP caldera URL canceled"
 				} else if strings.EqualFold(m.manualTargetKind, "coop-key") {
@@ -719,6 +736,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if strings.EqualFold(m.manualTargetKind, "onchain") {
 					return m, m.submitManualOnchainTarget()
+				}
+				if strings.EqualFold(m.manualTargetKind, "kali-container") {
+					return m, m.submitManualKaliContainer()
+				}
+				if strings.EqualFold(m.manualTargetKind, "kali-image") {
+					return m, m.submitManualKaliImage()
 				}
 				if strings.EqualFold(m.manualTargetKind, "coop-url") {
 					return m, m.submitManualCoopCalderaURL()
@@ -1561,6 +1584,7 @@ func (m model) preflightArchGraphAction(action controlAction) (bool, string) {
 		if strings.TrimSpace(action.KaliShell) == "" {
 			return false, "missing kali shell command"
 		}
+		return m.kaliPreflight(action)
 	case "local":
 		if len(action.Args) == 0 && strings.TrimSpace(action.Command) == "" {
 			return false, "missing local command"
@@ -3326,6 +3350,10 @@ func (m model) controlView() string {
 			modeLabel = "OSINT (" + strings.ToUpper(m.selectedOsintInputType()) + ")"
 		} else if strings.EqualFold(m.manualTargetKind, "onchain") {
 			modeLabel = "ONCHAIN (" + strings.ToUpper(m.selectedOnchainInputType()) + ")"
+		} else if strings.EqualFold(m.manualTargetKind, "kali-container") {
+			modeLabel = "KALI CONTAINER"
+		} else if strings.EqualFold(m.manualTargetKind, "kali-image") {
+			modeLabel = "KALI IMAGE"
 		} else if strings.EqualFold(m.manualTargetKind, "coop-url") {
 			modeLabel = "CO-OP CALDERA URL"
 		} else if strings.EqualFold(m.manualTargetKind, "coop-key") {
@@ -3590,6 +3618,10 @@ func (m model) controlOptionsPanel(width int, actions []controlAction) string {
 	}
 	switch m.controlSection {
 	case 1:
+		lines = append(lines,
+			metricLine("kali container", truncate(kaliContainerName(), max(20, width-20))),
+			metricLine("kali image", truncate(kaliImageName(), max(20, width-16))),
+		)
 		if strings.EqualFold(m.fireMode, "coop") {
 			lines = append(lines,
 				metricLine("caldera url", truncate(m.selectedCoopCalderaURL(), max(20, width-16))),
@@ -3661,10 +3693,14 @@ func (m model) controlOptionsPanel(width int, actions []controlAction) string {
 	}
 	selectedIdx := clamp(m.activeControlIndex(), 0, len(actions)-1)
 	selected := actions[selectedIdx]
+	selectedCommand := valueOr(selected.Command, "internal-action")
+	if strings.EqualFold(strings.TrimSpace(selected.Mode), "kali") && strings.TrimSpace(selected.KaliShell) != "" {
+		selectedCommand = kaliExecCommand(selected.KaliShell)
+	}
 	lines = append(lines,
 		metricLine("selected option", selected.Label),
 		metricLine("description", truncate(selected.Description, max(24, width-16))),
-		metricLine("command", truncate(valueOr(selected.Command, "internal-action"), max(24, width-12))),
+		metricLine("command", truncate(selectedCommand, max(24, width-12))),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("available options"),
 	)
@@ -3675,13 +3711,13 @@ func (m model) controlOptionsPanel(width int, actions []controlAction) string {
 		if i == m.activeControlIndex() {
 			prefix = "▸ "
 		}
-		label := truncate(controlActionTaggedLabel(action, snap, m.commands, doneCache), max(16, width-6))
+		label := truncate(m.controlActionTaggedLabel(action, snap, m.commands, doneCache), max(16, width-6))
 		lines = append(lines, prefix+styleControlOptionTags(label))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func controlActionTaggedLabel(action controlAction, snap chainSnapshot, commands []commandEntry, doneCache map[string]bool) string {
+func (m model) controlActionTaggedLabel(action controlAction, snap chainSnapshot, commands []commandEntry, doneCache map[string]bool) string {
 	tags := []string{}
 	switch strings.ToLower(strings.TrimSpace(action.Mode)) {
 	case "kali":
@@ -3695,6 +3731,12 @@ func controlActionTaggedLabel(action controlAction, snap chainSnapshot, commands
 		tags = append(tags, "DONE")
 	} else if ok, _ := requirementsReady(action.Requires, snap); !ok {
 		tags = append(tags, "LOCKED")
+	} else if strings.EqualFold(strings.TrimSpace(action.Mode), "kali") {
+		if ok, _ := m.kaliPreflight(action); !ok {
+			tags = append(tags, "LOCKED")
+		} else {
+			tags = append(tags, "READY")
+		}
 	} else if !strings.EqualFold(strings.TrimSpace(action.Mode), "internal") {
 		tags = append(tags, "READY")
 	}
@@ -3881,8 +3923,111 @@ func kaliContainerName() string {
 	return value
 }
 
+func kaliImageName() string {
+	value := strings.TrimSpace(os.Getenv("H3RETIK_KALI_IMAGE"))
+	if value == "" {
+		return "h3retik/kali:v0.0.3"
+	}
+	return value
+}
+
 func kaliExecCommand(shell string) string {
 	return "docker exec " + kaliContainerName() + " bash -lc " + shellQuote(shell)
+}
+
+func clearKaliToolCache(container string) {
+	needle := strings.TrimSpace(container)
+	if needle == "" {
+		return
+	}
+	kaliToolCacheMu.Lock()
+	defer kaliToolCacheMu.Unlock()
+	for key := range kaliToolCache {
+		if strings.HasPrefix(key, needle+"::") {
+			delete(kaliToolCache, key)
+		}
+	}
+}
+
+func kaliToolCacheKey(container, tool string) string {
+	return strings.TrimSpace(container) + "::" + strings.TrimSpace(strings.ToLower(tool))
+}
+
+func firstShellCommandToken(shell string) string {
+	trimmed := strings.TrimSpace(shell)
+	if trimmed == "" {
+		return ""
+	}
+	separators := []string{"&&", "||", ";", "\n", "|"}
+	for _, sep := range separators {
+		if idx := strings.Index(trimmed, sep); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+	}
+	if trimmed == "" {
+		return ""
+	}
+	for _, token := range strings.Fields(trimmed) {
+		clean := strings.Trim(strings.TrimSpace(token), `"'`)
+		if clean == "" {
+			continue
+		}
+		if strings.Contains(clean, "=") && !strings.HasPrefix(clean, "/") && !strings.Contains(clean, "/") {
+			continue
+		}
+		if strings.HasPrefix(clean, "$") {
+			continue
+		}
+		return clean
+	}
+	return ""
+}
+
+func kaliToolAvailableCached(container, tool string) (bool, error) {
+	container = strings.TrimSpace(container)
+	tool = strings.TrimSpace(strings.ToLower(tool))
+	if container == "" || tool == "" {
+		return true, nil
+	}
+	key := kaliToolCacheKey(container, tool)
+	kaliToolCacheMu.Lock()
+	if hit, ok := kaliToolCache[key]; ok {
+		kaliToolCacheMu.Unlock()
+		return hit, nil
+	}
+	kaliToolCacheMu.Unlock()
+
+	check := exec.Command("docker", "exec", container, "bash", "-lc", "command -v "+shellQuote(tool)+" >/dev/null 2>&1")
+	err := check.Run()
+	available := err == nil
+	kaliToolCacheMu.Lock()
+	kaliToolCache[key] = available
+	kaliToolCacheMu.Unlock()
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+func kaliRuntimeRunningCached(container string) bool {
+	container = strings.TrimSpace(container)
+	if container == "" {
+		return false
+	}
+	now := time.Now()
+	kaliStateMu.Lock()
+	if state, ok := kaliStateCache[container]; ok && now.Sub(state.Checked) < 2*time.Second {
+		kaliStateMu.Unlock()
+		return state.Running
+	}
+	kaliStateMu.Unlock()
+	check := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", container)
+	out, err := check.CombinedOutput()
+	running := err == nil && strings.Contains(strings.ToLower(strings.TrimSpace(string(out))), "true")
+	kaliStateMu.Lock()
+	kaliStateCache[container] = kaliRuntimeState{Running: running, Checked: now}
+	kaliStateMu.Unlock()
+	return running
 }
 
 func defaultCoopCalderaURL() string {
@@ -10743,10 +10888,45 @@ func (m model) activeControlActions() []controlAction {
 	case 1:
 		return m.targetActions()
 	case 2:
-		return m.fireActions()
+		return m.filterUnsupportedKaliActions(m.fireActions())
 	default:
 		return m.historyActions()
 	}
+}
+
+func (m model) filterUnsupportedKaliActions(actions []controlAction) []controlAction {
+	if len(actions) == 0 {
+		return actions
+	}
+	if !kaliRuntimeRunningCached(kaliContainerName()) {
+		return actions
+	}
+	filtered := make([]controlAction, 0, len(actions))
+	for _, action := range actions {
+		if !strings.EqualFold(strings.TrimSpace(action.Mode), "kali") {
+			filtered = append(filtered, action)
+			continue
+		}
+		requiredTool := m.requiredKaliTool(action)
+		if strings.TrimSpace(requiredTool) == "" {
+			filtered = append(filtered, action)
+			continue
+		}
+		if available, _ := kaliToolAvailableCached(kaliContainerName(), requiredTool); available {
+			filtered = append(filtered, action)
+		}
+	}
+	if len(filtered) == 0 {
+		return []controlAction{
+			{
+				Label:       "No Runnable FIRE Commands",
+				Description: "No compatible Kali commands found for this mode/group. Check runtime toolchain.",
+				Mode:        "internal",
+				Command:     "noop",
+			},
+		}
+	}
+	return filtered
 }
 
 func (m model) activeControlIndex() int {
@@ -11472,8 +11652,28 @@ func (m model) launchActions() []controlAction {
 }
 
 func (m model) targetActions() []controlAction {
+	runtimeActions := []controlAction{
+		{
+			Label:       "KALI Runtime Container (Type)",
+			Description: "Set docker container name used for all Kali-mode execution.",
+			Mode:        "internal",
+			Command:     "target:manual-kali-container",
+		},
+		{
+			Label:       "KALI Runtime Image (Type)",
+			Description: "Set Kali image tag used by compose-based runtime startup.",
+			Mode:        "internal",
+			Command:     "target:manual-kali-image",
+		},
+		{
+			Label:       "KALI Runtime Profile",
+			Description: "container=" + kaliContainerName() + " image=" + kaliImageName(),
+			Mode:        "internal",
+			Command:     "noop",
+		},
+	}
 	if strings.EqualFold(m.fireMode, "coop") {
-		return []controlAction{
+		return append(runtimeActions, []controlAction{
 			{
 				Label:       "CO-OP Caldera URL (Type)",
 				Description: "Set CALDERA API/UI base URL used by co-op C2 commands.",
@@ -11504,10 +11704,10 @@ func (m model) targetActions() []controlAction {
 				Mode:        "internal",
 				Command:     "noop",
 			},
-		}
+		}...)
 	}
 	if strings.EqualFold(m.fireMode, "osint") {
-		return []controlAction{
+		return append(runtimeActions, []controlAction{
 			{
 				Label:       "OSINT Input: Edit Seed (Type)",
 				Description: "Type investigation seed (domain/url/person/email/username/phone/ip).",
@@ -11526,11 +11726,11 @@ func (m model) targetActions() []controlAction {
 				Mode:        "internal",
 				Command:     "target:osint-seed-from-url",
 			},
-		}
+		}...)
 	}
 	if strings.EqualFold(m.fireMode, "onchain") {
 		profile := m.selectedOnchainProfile()
-		return []controlAction{
+		return append(runtimeActions, []controlAction{
 			{
 				Label:       "ONCHAIN Input: Edit Target (Type)",
 				Description: "Type address/tx/block/contract/repo seed for onchain investigation.",
@@ -11555,10 +11755,10 @@ func (m model) targetActions() []controlAction {
 				Mode:        "internal",
 				Command:     "noop",
 			},
-		}
+		}...)
 	}
 
-	actions := []controlAction{}
+	actions := append([]controlAction{}, runtimeActions...)
 	activeTarget := strings.TrimSpace(m.state.TargetURL)
 	actions = append(actions, controlAction{
 		Label:       "Set Target: Custom URL (Type)",
@@ -11808,6 +12008,31 @@ func requirementsReady(requirements []string, snap chainSnapshot) (bool, string)
 	return false, "requires " + strings.Join(missing, ", ")
 }
 
+func (m model) requiredKaliTool(action controlAction) string {
+	if !strings.EqualFold(strings.TrimSpace(action.Mode), "kali") {
+		return ""
+	}
+	return firstShellCommandToken(action.KaliShell)
+}
+
+func (m model) kaliPreflight(action controlAction) (bool, string) {
+	if !kaliRuntimeRunningCached(kaliContainerName()) {
+		return false, "kali container " + kaliContainerName() + " is not running"
+	}
+	requiredTool := m.requiredKaliTool(action)
+	if strings.TrimSpace(requiredTool) == "" {
+		return true, ""
+	}
+	available, probeErr := kaliToolAvailableCached(kaliContainerName(), requiredTool)
+	if probeErr != nil {
+		return false, "kali tool check failed: " + probeErr.Error()
+	}
+	if !available {
+		return false, "missing kali tool: " + requiredTool
+	}
+	return true, ""
+}
+
 func (m *model) preflightControlAction(action controlAction) (bool, string) {
 	if action.Mode == "internal" {
 		return true, ""
@@ -11859,11 +12084,10 @@ func (m *model) preflightControlAction(action controlAction) (bool, string) {
 		}
 	}
 	if action.Mode == "kali" {
-		check := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", kaliContainerName())
-		out, err := check.CombinedOutput()
-		if err != nil || !strings.Contains(strings.ToLower(strings.TrimSpace(string(out))), "true") {
-			return false, "kali container " + kaliContainerName() + " is not running"
+		if ok, reason := m.kaliPreflight(action); !ok {
+			return false, reason
 		}
+		return true, warning
 	}
 	return true, warning
 }
@@ -12715,6 +12939,16 @@ func (m *model) applyInternalAction(action controlAction) {
 			}
 		}
 		m.controlStatus = "manual target input active :: type URL and press Enter (Esc cancels)"
+	case "target:manual-kali-container":
+		m.manualTargetMode = true
+		m.manualTargetKind = "kali-container"
+		m.manualTargetInput = kaliContainerName()
+		m.controlStatus = "manual kali container input active :: type container and press Enter (Esc cancels)"
+	case "target:manual-kali-image":
+		m.manualTargetMode = true
+		m.manualTargetKind = "kali-image"
+		m.manualTargetInput = kaliImageName()
+		m.controlStatus = "manual kali image input active :: type image tag and press Enter (Esc cancels)"
 	case "target:manual-osint":
 		m.manualTargetMode = true
 		m.manualTargetKind = "osint"
@@ -13260,6 +13494,45 @@ func (m *model) submitManualOnchainTarget() tea.Cmd {
 	m.controlOutput = ""
 	m.controlLastLabel = "Set ONCHAIN Input: " + strings.ToUpper(m.selectedOnchainInputType())
 	m.controlLastCommand = target
+	m.controlDetailScroll = 0
+	return nil
+}
+
+func (m *model) submitManualKaliContainer() tea.Cmd {
+	value := strings.TrimSpace(m.manualTargetInput)
+	if value == "" {
+		m.controlStatus = "manual kali container is empty"
+		return nil
+	}
+	prev := kaliContainerName()
+	os.Setenv("H3RETIK_KALI_CONTAINER", value)
+	clearKaliToolCache(prev)
+	clearKaliToolCache(value)
+	kaliStateMu.Lock()
+	delete(kaliStateCache, prev)
+	delete(kaliStateCache, value)
+	kaliStateMu.Unlock()
+	m.manualTargetMode = false
+	m.controlStatus = "ok :: kali container -> " + truncate(value, 64)
+	m.controlOutput = ""
+	m.controlLastLabel = "Set Kali Container"
+	m.controlLastCommand = value
+	m.controlDetailScroll = 0
+	return nil
+}
+
+func (m *model) submitManualKaliImage() tea.Cmd {
+	value := strings.TrimSpace(m.manualTargetInput)
+	if value == "" {
+		m.controlStatus = "manual kali image is empty"
+		return nil
+	}
+	os.Setenv("H3RETIK_KALI_IMAGE", value)
+	m.manualTargetMode = false
+	m.controlStatus = "ok :: kali image -> " + truncate(value, 64)
+	m.controlOutput = ""
+	m.controlLastLabel = "Set Kali Image"
+	m.controlLastCommand = value
 	m.controlDetailScroll = 0
 	return nil
 }
