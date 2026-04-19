@@ -63,6 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     john \
     hashcat \
     metasploit-framework \
+    caldera \
     sliver \
     set \
     python3-impacket \
@@ -138,7 +139,7 @@ RUN git clone --depth=1 https://github.com/yogeshojha/rengine.git /opt/rengine \
 
 COPY kali-headless/ /usr/local/bin/
 
-RUN chmod +x /usr/local/bin/osint-* /usr/local/bin/onchain-*
+RUN chmod +x /usr/local/bin/osint-* /usr/local/bin/onchain-* /usr/local/bin/coop-*
 
 RUN ln -sf /root/.local/bin/slither /usr/local/bin/slither \
     && ln -sf /root/.local/bin/crytic-compile /usr/local/bin/crytic-compile \

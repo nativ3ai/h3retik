@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+url="${COOP_CALDERA_URL:-http://127.0.0.1:8888}"
+pid_file="${COOP_CALDERA_PID_FILE:-/tmp/h3retik-caldera.pid}"
+
+check_bin() {
+  local label="$1"
+  local bin="$2"
+  if command -v "$bin" >/dev/null 2>&1; then
+    echo "[coop] ok  :: $label -> $(command -v "$bin")"
+  else
+    echo "[coop] miss:: $label"
+    return 1
+  fi
+}
+
+rc=0
+check_bin "caldera" caldera || rc=1
+check_bin "curl" curl || rc=1
+if [[ -f /var/lib/caldera/conf/default.yml ]]; then
+  echo "[coop] ok  :: config -> /var/lib/caldera/conf/default.yml"
+else
+  echo "[coop] miss:: config -> /var/lib/caldera/conf/default.yml"
+  rc=1
+fi
+
+if [[ -f "$pid_file" ]]; then
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [[ -n "${pid}" ]] && kill -0 "$pid" 2>/dev/null; then
+    echo "[coop] ok  :: caldera pid=$pid running"
+  else
+    echo "[coop] warn:: stale pid file at $pid_file"
+  fi
+else
+  echo "[coop] info:: pid file not found ($pid_file)"
+fi
+
+http_code="$(curl -sS -k -o /dev/null -w "%{http_code}" "$url" || true)"
+if [[ "$http_code" =~ ^2|3|4 ]]; then
+  echo "[coop] ok  :: endpoint reachable url=$url http=$http_code"
+else
+  echo "[coop] info:: endpoint not reachable url=$url http=${http_code:-n/a}"
+fi
+
+exit "$rc"

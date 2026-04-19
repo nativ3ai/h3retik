@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${H3RETIK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo "0.0.1")"
+VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo "0.0.3")"
 KALI_CONTAINER="${H3RETIK_KALI_CONTAINER:-jsbb-kali}"
 
 die() {
@@ -27,6 +27,20 @@ ensure_tui() {
   run_root go build -o bin/juicetui ./cmd/juicetui
 }
 
+ensure_kali_runtime() {
+  if docker inspect "$KALI_CONTAINER" >/dev/null 2>&1; then
+    if ! docker inspect -f '{{.State.Running}}' "$KALI_CONTAINER" 2>/dev/null | grep -qi true; then
+      echo "h3retik: starting existing container $KALI_CONTAINER"
+      docker start "$KALI_CONTAINER" >/dev/null
+    else
+      echo "h3retik: using existing container $KALI_CONTAINER"
+    fi
+    return
+  fi
+  echo "h3retik: starting compose-managed kali service"
+  run_root docker compose up -d kali
+}
+
 usage() {
   cat <<EOF
 h3retik v$VERSION
@@ -40,6 +54,7 @@ Usage:
   h3retik build-kali               # build kali image
   h3retik shell                    # interactive shell in kali
   h3retik kali <cmd...>            # execute command in kali
+  h3retik coop <subcommand>        # caldera co-op helpers (check/up/status/stop/api/report)
   h3retik target <args...>         # passthrough to scripts/targetctl.py
   h3retik pipeline <args...>       # passthrough to scripts/security_pipeline.py
   h3retik observatory <args...>    # passthrough to scripts/observatory_runner.py
@@ -48,6 +63,11 @@ Usage:
   h3retik install                  # install global launcher in ~/.local/bin
   h3retik version                  # print version
   h3retik help                     # show this help
+
+Env overrides:
+  H3RETIK_KALI_CONTAINER           # default: jsbb-kali
+  H3RETIK_KALI_IMAGE               # default: h3retik/kali:v0.0.3 (compose mode)
+  H3RETIK_SKIP_UP=1                # skip docker compose up (attach to existing container)
 EOF
 }
 
@@ -57,12 +77,14 @@ case "$cmd" in
     shift || true
     ensure_deps
     ensure_tui
-    run_root docker compose up -d kali
+    if [[ "${H3RETIK_SKIP_UP:-0}" != "1" ]]; then
+      ensure_kali_runtime
+    fi
     exec "$ROOT/bin/juicetui" "$@"
     ;;
   up)
     ensure_deps
-    run_root docker compose up -d kali
+    ensure_kali_runtime
     ;;
   down)
     ensure_deps
@@ -78,17 +100,52 @@ case "$cmd" in
     ;;
   shell)
     ensure_deps
-    run_root docker compose up -d kali
+    ensure_kali_runtime
     exec docker exec -it "$KALI_CONTAINER" bash
     ;;
   kali)
     shift || true
     ensure_deps
-    run_root docker compose up -d kali
+    ensure_kali_runtime
     if [[ $# -eq 0 ]]; then
       exec docker exec -it "$KALI_CONTAINER" bash
     fi
     exec docker exec "$KALI_CONTAINER" bash -lc "$*"
+    ;;
+  coop)
+    shift || true
+    ensure_deps
+    sub="${1:-status}"
+    shift || true
+    if [[ "${H3RETIK_SKIP_UP:-0}" != "1" ]]; then
+      ensure_kali_runtime
+    fi
+    case "$sub" in
+      check)
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-check'
+        ;;
+      up)
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-up'
+        ;;
+      status)
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-status'
+        ;;
+      stop)
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-stop'
+        ;;
+      api)
+        path="${1:-/api/operations}"
+        method="${2:-GET}"
+        body="${3:-}"
+        exec docker exec "$KALI_CONTAINER" bash -lc "coop-caldera-api $(printf %q "$path") $(printf %q "$method") $(printf %q "$body")"
+        ;;
+      report)
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-op-report'
+        ;;
+      *)
+        die "unknown coop subcommand: $sub (use: check|up|status|stop|api|report)"
+        ;;
+    esac
     ;;
   target)
     shift || true
@@ -119,9 +176,12 @@ case "$cmd" in
       echo "go: missing (required for build)"
     fi
     docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || die "docker daemon not reachable"
-    run_root docker compose up -d kali >/dev/null
+    if [[ "${H3RETIK_SKIP_UP:-0}" != "1" ]]; then
+      ensure_kali_runtime >/dev/null
+    fi
     docker exec "$KALI_CONTAINER" bash -lc 'osint-stack-check' || true
     docker exec "$KALI_CONTAINER" bash -lc 'onchain-stack-check' || true
+    docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-check' || true
     ;;
   install)
     shift || true

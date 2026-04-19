@@ -1,4 +1,4 @@
-# h3retik v0.0.1 — Literate Build Notes
+# h3retik v0.0.3 — Literate Build Notes
 
 This document explains the packaged system as executable narrative: each section maps directly to code and commands.
 
@@ -16,18 +16,29 @@ Default flow:
 2. Ensure Kali runtime is up (`docker compose up -d kali`)
 3. Launch TUI
 
+Existing-container mode (no compose startup):
+
+```bash
+export H3RETIK_KALI_CONTAINER=<container-name>
+export H3RETIK_SKIP_UP=1
+h3retik tui
+```
+
+If `jsbb-kali` is already running, the launcher will attach to it automatically when you run `h3retik`.
+
 ## 2) Preconfigured Kali runtime
 
 Design goal: deterministic image for headless tooling.
 
 - Compose file: `docker-compose.yml`
 - Docker build: `Dockerfile.kali`
-- Image tag: `h3retik/kali:v0.0.1`
+- Image tag: `h3retik/kali:v0.0.3`
 
 The Kali image includes OSINT, exploit, and onchain wrappers under:
 
 - `kali-headless/osint-*`
 - `kali-headless/onchain-*`
+- `kali-headless/coop-*`
 
 ## 3) Global install model
 

@@ -39,19 +39,20 @@ type keyMap struct {
 	RawToggle   key.Binding
 	ModeToggle  key.Binding
 	ChainToggle key.Binding
+	CoopToggle  key.Binding
 	MapToggle   key.Binding
 	Refresh     key.Binding
 	Quit        key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.NextPane, k.PrevPane, k.Select, k.Fire, k.Replay, k.RawToggle, k.ModeToggle, k.ChainToggle, k.MapToggle, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.NextPane, k.PrevPane, k.Select, k.Fire, k.Replay, k.RawToggle, k.ModeToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Refresh, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Left, k.Right, k.NextPane, k.PrevPane},
-		{k.NextOption, k.PrevOption, k.Select, k.Fire, k.ScrollUp, k.ScrollDown, k.Replay, k.RawToggle, k.ModeToggle, k.ChainToggle, k.MapToggle, k.Refresh, k.Quit},
+		{k.NextOption, k.PrevOption, k.Select, k.Fire, k.ScrollUp, k.ScrollDown, k.Replay, k.RawToggle, k.ModeToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Refresh, k.Quit},
 	}
 }
 
@@ -281,6 +282,14 @@ type exploitTaxonomyNode struct {
 	Sub   string
 }
 
+type exploitSkullMapNode struct {
+	Zone        string
+	ZoneLabel   string
+	Sub         string
+	SubLabel    string
+	Description string
+}
+
 type dbCredentialHint struct {
 	Engine   string
 	Host     string
@@ -297,6 +306,23 @@ type exploitMissionStats struct {
 	HealthScore    int
 	Exploitability int
 	NoiseScore     int
+}
+
+type exploitAchievement struct {
+	ID       string
+	Name     string
+	Hint     string
+	Points   int
+	Unlocked bool
+}
+
+type exploitCampaignRating struct {
+	OpsecScore      int
+	PwnedScore      int
+	TraceBurden     int
+	NoisyActions    int
+	MutatingActions int
+	AuthActions     int
 }
 
 type attackGraphNode struct {
@@ -368,6 +394,8 @@ type model struct {
 	findingIdx              int
 	archGraphIdx            int
 	archGraphActionIdx      int
+	archMapTaxIdx           int
+	archMapTreeFocus        bool
 	archMapMode             bool
 	pwnedTaxIdx             int
 	lootIdx                 int
@@ -413,6 +441,10 @@ type model struct {
 	onchainTargetInput      string
 	onchainTargetTypeIdx    int
 	onchainNetworkInput     string
+	coopCalderaURL          string
+	coopCalderaAPIKey       string
+	coopOperationName       string
+	coopAgentGroup          string
 	customCommandInput      string
 	customCommandRuntime    string
 	customTemplateIdx       int
@@ -499,6 +531,7 @@ func initialModel(root string) model {
 			RawToggle:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "loot raw")),
 			ModeToggle:  key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "mode/scope")),
 			ChainToggle: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "onchain")),
+			CoopToggle:  key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "co-op")),
 			MapToggle:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "arch map")),
 			Refresh:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 			Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
@@ -515,6 +548,10 @@ func initialModel(root string) model {
 		osintTargetInput:        "example.com",
 		onchainTargetInput:      "0x0000000000000000000000000000000000000000",
 		onchainNetworkInput:     "eth-mainnet",
+		coopCalderaURL:          defaultCoopCalderaURL(),
+		coopCalderaAPIKey:       defaultCoopCalderaAPIKey(),
+		coopOperationName:       "h3retik-operation",
+		coopAgentGroup:          "red",
 		customCommandInput:      "",
 		customCommandRuntime:    "kali",
 		customTemplateIdx:       0,
@@ -648,6 +685,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.controlStatus = "manual OSINT input canceled"
 				} else if strings.EqualFold(m.manualTargetKind, "onchain") {
 					m.controlStatus = "manual ONCHAIN input canceled"
+				} else if strings.EqualFold(m.manualTargetKind, "coop-url") {
+					m.controlStatus = "manual CO-OP caldera URL canceled"
+				} else if strings.EqualFold(m.manualTargetKind, "coop-key") {
+					m.controlStatus = "manual CO-OP API key canceled"
+				} else if strings.EqualFold(m.manualTargetKind, "coop-operation") {
+					m.controlStatus = "manual CO-OP operation name canceled"
+				} else if strings.EqualFold(m.manualTargetKind, "coop-agent-group") {
+					m.controlStatus = "manual CO-OP agent group canceled"
 				} else if strings.EqualFold(m.manualTargetKind, "module-input") {
 					m.controlStatus = "module input canceled"
 				} else if strings.EqualFold(m.manualTargetKind, "custom-command") {
@@ -674,6 +719,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if strings.EqualFold(m.manualTargetKind, "onchain") {
 					return m, m.submitManualOnchainTarget()
+				}
+				if strings.EqualFold(m.manualTargetKind, "coop-url") {
+					return m, m.submitManualCoopCalderaURL()
+				}
+				if strings.EqualFold(m.manualTargetKind, "coop-key") {
+					return m, m.submitManualCoopCalderaAPIKey()
+				}
+				if strings.EqualFold(m.manualTargetKind, "coop-operation") {
+					return m, m.submitManualCoopOperationName()
+				}
+				if strings.EqualFold(m.manualTargetKind, "coop-agent-group") {
+					return m, m.submitManualCoopAgentGroup()
 				}
 				if strings.EqualFold(m.manualTargetKind, "custom-command") {
 					return m, m.submitManualCustomCommand()
@@ -905,10 +962,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyModeHotkey()
 		case msg.String() == "c" || msg.String() == "C":
 			m.applyChainHotkey()
+		case msg.String() == "g" || msg.String() == "G":
+			m.applyCoopHotkey()
 		case key.Matches(msg, m.keys.ModeToggle):
 			m.applyModeHotkey()
 		case key.Matches(msg, m.keys.ChainToggle):
 			m.applyChainHotkey()
+		case key.Matches(msg, m.keys.CoopToggle):
+			m.applyCoopHotkey()
 		case msg.String() == "m" || msg.String() == "M":
 			m.applyMapHotkey()
 		case key.Matches(msg, m.keys.MapToggle):
@@ -1076,6 +1137,20 @@ func (m *model) moveArchGraph(direction string) {
 		m.archGraphActionIdx = 0
 		m.commandDetailScroll = 0
 	}
+}
+
+func (m *model) moveArchMapTaxonomy(delta int) {
+	nodes := exploitSkullMapNodes()
+	if len(nodes) == 0 {
+		m.archMapTaxIdx = 0
+		return
+	}
+	m.archMapTaxIdx = clampWrap(m.archMapTaxIdx+delta, len(nodes))
+	m.archGraphIdx = 0
+	m.archGraphActionIdx = 0
+	m.commandDetailScroll = 0
+	selected := nodes[m.archMapTaxIdx]
+	m.archGraphStatus = "taxonomy :: " + selected.ZoneLabel + " / " + selected.SubLabel
 }
 
 func (m model) exploitGraphNodes() []attackGraphNode {
@@ -2234,6 +2309,23 @@ func (m *model) applyChainHotkey() {
 	}
 }
 
+func (m *model) applyCoopHotkey() {
+	if m.tab != 4 {
+		return
+	}
+	if strings.EqualFold(m.fireMode, "coop") {
+		m.fireMode = "exploit"
+	} else {
+		m.fireMode = "coop"
+	}
+	m.exploitPipelineMenu = false
+	m.controlSection = 2
+	m.fireIdx = 0
+	m.ensureCommandSelection()
+	m.ensureFindingSelection()
+	m.controlStatus = "ok :: CTRL mode -> " + strings.ToUpper(m.fireMode)
+}
+
 func (m *model) resetDetailScroll() {
 	m.commandDetailScroll = 0
 	m.findingDetailScroll = 0
@@ -2589,6 +2681,7 @@ func (m model) overviewView() string {
 		metricLine("status", valueOr(m.state.Status, "idle")),
 		metricLine("phase", valueOr(m.state.Phase, "waiting")),
 		metricLine("updated", shortTime(m.state.LastUpdated)),
+		ternary(strings.EqualFold(mode, "exploit"), "\n"+lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("campaign ratings")+"\n"+exploitCampaignRatingsBoard(scopedCommands, scopedFindings, scopedLoot, leftWidth-4), ""),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("timeline replay"),
 		wrap("OPS tab -> select event -> x to replay from timeline", leftWidth-4),
@@ -2617,6 +2710,16 @@ func (m model) overviewView() string {
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("workflow chain"),
 		modeWorkflowBoard(mode, scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
+	}
+	if strings.EqualFold(mode, "coop") {
+		readiness, score := coopReadinessSummary(scopedCommands)
+		rightTopLines = append(rightTopLines,
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("c2 readiness"),
+			metricLine("state", readiness),
+			metricLine("score", fmt.Sprintf("%d/100 %s", score, progressBar(score, 8))),
+			metricLine("steps", coopReadinessSteps(scopedCommands)),
+		)
 	}
 	if strings.EqualFold(mode, "exploit") {
 		graphNodes := buildExploitAttackGraph(m.state, scopedCommands, scopedFindings, scopedLoot)
@@ -2654,19 +2757,14 @@ func (m model) overviewView() string {
 }
 
 func (m model) exploitArchMapView(leftWidth, rightWidth int, commands []commandEntry, findings []findingEntry, loot []lootEntry) string {
-	nodes := buildExploitAttackGraph(m.state, commands, findings, loot)
+	nodes := m.exploitGraphNodes()
 	edges := buildExploitAttackEdges(m.state, commands, findings, nodes)
 	selected := 0
 	if len(nodes) > 0 {
 		selected = clampWrap(m.archGraphIdx, len(nodes))
 	}
 	leftLines := []string{
-		metricLine("map mode", "ON"),
-		metricLine("scope", "EXPLOIT"),
-		metricLine("target", valueOr(m.state.TargetName, "target")),
-		metricLine("url", valueOr(m.state.TargetURL, "n/a")),
-		"",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("live attack graph"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("live attack tree"),
 		renderExploitAttackGraphASCII(nodes, edges, selected, leftWidth-4, m.archCollapsed),
 	}
 	rightLines := []string{
@@ -2697,7 +2795,7 @@ func (m model) exploitArchMapView(leftWidth, rightWidth int, commands []commandE
 	rightLines = append(rightLines,
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("node actions"),
-		metricLine("nav", "↑/↓ tree  ←/→ hierarchy  h/l collapse-expand  ,/. cycle action"),
+		metricLine("nav", "↑/↓ tree  ←/→ hierarchy  h/l collapse-expand"),
 		metricLine("select", "1..9 quick-select action"),
 		metricLine("trigger", "Enter preview/checks  f execute"),
 		metricLine("selected action", selectedActionLabel),
@@ -2717,7 +2815,7 @@ func (m model) exploitArchMapView(leftWidth, rightWidth int, commands []commandE
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("last map command output"),
 		renderStructuredCommandOutput(valueOr(strings.TrimSpace(m.archGraphOutput), "no graph command output yet"), rightWidth-4, m.archOutputRaw),
 		"",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press m to exit map mode"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: tree-only map mode active; press m to exit map mode"),
 	)
 	if m.manualTargetMode && (strings.EqualFold(m.manualTargetKind, "arch-edit-endpoint") || strings.EqualFold(m.manualTargetKind, "arch-edit-payload") || strings.EqualFold(m.manualTargetKind, "arch-edit-field-value")) {
 		rightLines = append(rightLines,
@@ -2729,7 +2827,7 @@ func (m model) exploitArchMapView(leftWidth, rightWidth int, commands []commandE
 	}
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		pane("[ARCH] LIVE MAP :: EXPLOIT", strings.Join(leftLines, "\n"), leftWidth, m.height-6),
+		pane("[ARCH] LIVE MAP :: EXPLOIT TREE", strings.Join(leftLines, "\n"), leftWidth, m.height-6),
 		paneScrolled("[ARCH] MAP DETAIL", strings.Join(rightLines, "\n"), rightWidth, m.height-6, m.commandDetailScroll),
 	)
 }
@@ -2851,6 +2949,7 @@ func (m model) findingsView() string {
 	if mode == "" {
 		mode = "exploit"
 	}
+	modeCommands := commandsByMode(m.commands, mode)
 	order := findingDisplayOrderByMode(m.findings, mode)
 	lines := []string{}
 	for _, idx := range order {
@@ -2889,8 +2988,16 @@ func (m model) findingsView() string {
 		if actionCommand == "" {
 			actionCommand = "no mapped follow-up command for this finding"
 		}
-		pwnedArt := lipgloss.NewStyle().Foreground(lipgloss.Color("160")).Render(pwnedSkullASCII)
-		opsec := actionOpsecScore(action)
+		isFullyPwned := false
+		if strings.EqualFold(mode, "exploit") {
+			exploitStats := exploitMissionMetrics(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"))
+			isFullyPwned = exploitStats.DoneStages >= 6
+		}
+		pwnedArt := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Render(fallbackASCII)
+		if isFullyPwned {
+			pwnedArt = lipgloss.NewStyle().Foreground(lipgloss.Color("160")).Render(pwnedSkullASCII)
+		}
+		opsec := actionEffectiveOpsecScore(action, modeCommands)
 		detail = strings.Join([]string{
 			pwnedArt,
 			"",
@@ -2922,10 +3029,6 @@ func (m model) findingsView() string {
 		if out := strings.TrimSpace(m.pwnedFireOutput); out != "" {
 			detail += "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("last fire output") + "\n" + wrap(truncate(out, max(120, rightWidth*2)), rightWidth-4)
 		}
-	}
-	if strings.EqualFold(mode, "exploit") {
-		hud := exploitMissionHUDStrip(m.commands, m.findings, m.loot, rightWidth-4)
-		detail = hud + "\n\n" + detail
 	}
 	if len(order) == 0 {
 		detail = loadingPanel("waiting for first "+strings.ToUpper(mode)+" signal", m.currentLoadingFrame(), rightWidth)
@@ -3049,7 +3152,7 @@ func (m model) lootView() string {
 				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("selected action command"),
 				wrap(selectedAction.Command, rightWidth-4),
 				lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("opsec :: "+lootOpsecAlert(selectedAction)),
-				metricLine("opsec meter", opsecMeter(actionOpsecScore(selectedAction))),
+				metricLine("opsec meter", opsecMeter(actionEffectiveOpsecScore(selectedAction, m.commands))),
 			)
 		} else {
 			detailLines = append(detailLines, "no mapped operator action")
@@ -3060,7 +3163,7 @@ func (m model) lootView() string {
 			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: ,/. cycles operator actions"),
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press v to toggle raw/analyzed view"),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press o for OSINT taxonomy panel, c for ONCHAIN scope"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press o for OSINT taxonomy panel, c for ONCHAIN scope, g for CO-OP mode"),
 		)
 		if out := strings.TrimSpace(m.lootFireOutput); out != "" {
 			detailLines = append(detailLines,
@@ -3074,7 +3177,7 @@ func (m model) lootView() string {
 	if len(order) == 0 {
 		detail = strings.Join([]string{
 			metricLine("scope", ternary(m.lootOnchainMode, "ONCHAIN", "EXPLOIT")),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press o for OSINT panel, c for ONCHAIN scope"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press o for OSINT panel, c for ONCHAIN scope, g for CO-OP mode"),
 			"",
 			loadingPanel(ternary(m.lootOnchainMode, "awaiting onchain artifacts", "awaiting exfiltrated artifacts"), m.currentLoadingFrame(), rightWidth),
 		}, "\n")
@@ -3150,6 +3253,7 @@ func (m model) controlView() string {
 	scopedCommands := commandsByMode(m.commands, mode)
 	scopedFindings := findingsByMode(m.findings, mode)
 	scopedLoot := lootByMode(m.loot, mode)
+	activeActions := m.activeControlActions()
 	sections := []string{"launch", "target", "fire", "history"}
 	sectionBadges := make([]string, 0, len(sections))
 	for i, name := range sections {
@@ -3188,12 +3292,7 @@ func (m model) controlView() string {
 			lines = append(lines, style.Render(prefix+strings.ToUpper(group)))
 		}
 	} else {
-		actions := m.activeControlActions()
-		for i, action := range actions {
-			if i >= 8 {
-				lines = append(lines, fmt.Sprintf("+%d more", len(actions)-i))
-				break
-			}
+		for i, action := range activeActions {
 			prefix := "  "
 			style := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 			if i == m.activeControlIndex() {
@@ -3202,7 +3301,7 @@ func (m model) controlView() string {
 			}
 			lines = append(lines, style.Render(prefix+truncate(action.Label, max(24, leftWidth-8))))
 		}
-		if len(actions) == 0 {
+		if len(activeActions) == 0 {
 			lines = append(lines, "no categories/actions available")
 		}
 	}
@@ -3227,6 +3326,14 @@ func (m model) controlView() string {
 			modeLabel = "OSINT (" + strings.ToUpper(m.selectedOsintInputType()) + ")"
 		} else if strings.EqualFold(m.manualTargetKind, "onchain") {
 			modeLabel = "ONCHAIN (" + strings.ToUpper(m.selectedOnchainInputType()) + ")"
+		} else if strings.EqualFold(m.manualTargetKind, "coop-url") {
+			modeLabel = "CO-OP CALDERA URL"
+		} else if strings.EqualFold(m.manualTargetKind, "coop-key") {
+			modeLabel = "CO-OP CALDERA API KEY"
+		} else if strings.EqualFold(m.manualTargetKind, "coop-operation") {
+			modeLabel = "CO-OP OPERATION NAME"
+		} else if strings.EqualFold(m.manualTargetKind, "coop-agent-group") {
+			modeLabel = "CO-OP AGENT GROUP"
 		} else if strings.EqualFold(m.manualTargetKind, "module-input") {
 			modeLabel = "MODULE INPUT (" + strings.ToUpper(m.moduleInputModuleID) + ")"
 		} else if strings.EqualFold(m.manualTargetKind, "custom-command") {
@@ -3267,8 +3374,8 @@ func (m model) controlView() string {
 		}
 	}
 	selectedAction := controlAction{}
-	if actions := m.activeControlActions(); len(actions) > 0 {
-		selectedAction = actions[clamp(m.activeControlIndex(), 0, len(actions)-1)]
+	if len(activeActions) > 0 {
+		selectedAction = activeActions[clamp(m.activeControlIndex(), 0, len(activeActions)-1)]
 	}
 	rightLines := []string{
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("operation state"),
@@ -3279,13 +3386,14 @@ func (m model) controlView() string {
 		metricLine("last action", valueOr(m.controlLastLabel, "none")),
 		metricLine("last command", valueOr(m.controlLastCommand, "none")),
 		operationStateSummary(mode, scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
+		ternary(strings.EqualFold(mode, "coop"), lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(coopTutorialHint(scopedCommands)), ""),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("category options"),
-		m.controlOptionsPanel(rightWidth - 4),
+		m.controlOptionsPanel(rightWidth-4, activeActions),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("next best action"),
 		nextBestActionCard(scopedCommands, scopedFindings, scopedLoot, m.state.TargetURL, rightWidth-4),
-		metricLine("selected opsec", opsecMeter(actionOpsecScore(selectedAction))),
+		metricLine("selected opsec", opsecMeter(actionEffectiveOpsecScore(selectedAction, scopedCommands))),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("command result"),
 		output,
@@ -3296,6 +3404,21 @@ func (m model) controlView() string {
 		pane("[CTRL] INTERACTIVE LAUNCH + FIRE", strings.Join(lines, "\n"), leftWidth, m.height-6),
 		paneScrolled("[CTRL] OP STATE + RESULT", strings.Join(rightLines, "\n"), rightWidth, m.height-6, m.controlDetailScroll),
 	)
+}
+
+func coopTutorialHint(commands []commandEntry) string {
+	switch {
+	case !hasCommandMatch(commands, "coop-caldera-up"):
+		return "hint :: CTRL/LAUNCH -> [GUIDED] Co-op Quickstart then [COOP] Start CALDERA C2"
+	case !hasCommandMatch(commands, "coop-caldera-status"):
+		return "hint :: run [COOP] CALDERA Status to verify C2/API health"
+	case !hasCommandMatch(commands, "/api/agents") || !hasCommandMatch(commands, "/api/operations"):
+		return "hint :: run [COOP] List Agents + [COOP] List Operations"
+	case !hasCommandMatch(commands, "coop-caldera-op-report"):
+		return "hint :: run [COOP] Pull Operation Snapshot to persist artifacts/coop"
+	default:
+		return "hint :: co-op loop ready (status -> agents -> operations -> report)"
+	}
 }
 
 func (m model) selectedControlOptionLabel(section int) string {
@@ -3393,18 +3516,88 @@ func operationStateSummary(mode string, commands []commandEntry, findings []find
 		lines = append(lines, metricLine("entities mapped", fmt.Sprintf("%d", entitiesMapped)))
 	case "onchain":
 		lines = append(lines, metricLine("flow artifacts", fmt.Sprintf("%d", countOnchainFlowArtifacts(loot))))
+	case "coop":
+		agentQueries := 0
+		opQueries := 0
+		for _, cmd := range commands {
+			meta := strings.ToLower(cmd.Command + " " + cmd.Tool + " " + cmd.Phase)
+			if strings.Contains(meta, "/api/agents") || strings.Contains(meta, "coop-caldera-status") {
+				agentQueries++
+			}
+			if strings.Contains(meta, "/api/operations") || strings.Contains(meta, "op-report") {
+				opQueries++
+			}
+		}
+		lines = append(lines, metricLine("c2 probes", fmt.Sprintf("agents=%d operations=%d", agentQueries, opQueries)))
 	}
 	return wrap(strings.Join(lines, " | "), width)
 }
 
-func (m model) controlOptionsPanel(width int) string {
+func coopReadinessSummary(commands []commandEntry) (string, int) {
+	up := hasCommandMatch(commands, "coop-caldera-up")
+	status := hasCommandMatch(commands, "coop-caldera-status")
+	agents := hasCommandMatch(commands, "/api/agents")
+	operations := hasCommandMatch(commands, "/api/operations")
+	report := hasCommandMatch(commands, "coop-caldera-op-report")
+	score := 0
+	if up {
+		score += 20
+	}
+	if status {
+		score += 25
+	}
+	if agents {
+		score += 20
+	}
+	if operations {
+		score += 20
+	}
+	if report {
+		score += 15
+	}
+	score = clamp(score, 0, 100)
+	switch {
+	case score >= 85:
+		return "operational", score
+	case score >= 60:
+		return "ready", score
+	case score >= 30:
+		return "warming", score
+	default:
+		return "cold", score
+	}
+}
+
+func coopReadinessSteps(commands []commandEntry) string {
+	step := func(done bool) string {
+		if done {
+			return "done"
+		}
+		return "todo"
+	}
+	up := hasCommandMatch(commands, "coop-caldera-up")
+	status := hasCommandMatch(commands, "coop-caldera-status")
+	agents := hasCommandMatch(commands, "/api/agents")
+	operations := hasCommandMatch(commands, "/api/operations")
+	report := hasCommandMatch(commands, "coop-caldera-op-report")
+	return fmt.Sprintf("up:%s status:%s agents:%s ops:%s report:%s", step(up), step(status), step(agents), step(operations), step(report))
+}
+
+func (m model) controlOptionsPanel(width int, actions []controlAction) string {
 	lines := []string{
 		metricLine("section", strings.ToUpper(m.currentControlSectionLabel())),
 		"nav :: [] section  |  ↑/↓ category  |  ./, option  |  Enter/f execute",
 	}
 	switch m.controlSection {
 	case 1:
-		if strings.EqualFold(m.fireMode, "osint") {
+		if strings.EqualFold(m.fireMode, "coop") {
+			lines = append(lines,
+				metricLine("caldera url", truncate(m.selectedCoopCalderaURL(), max(20, width-16))),
+				metricLine("api key", ternary(strings.TrimSpace(m.selectedCoopCalderaAPIKey()) == "", "unset", "set")),
+				metricLine("operation", truncate(m.selectedCoopOperationName(), max(20, width-16))),
+				metricLine("agent group", truncate(m.selectedCoopAgentGroup(), max(20, width-16))),
+			)
+		} else if strings.EqualFold(m.fireMode, "osint") {
 			lines = append(lines, metricLine("osint seed type", strings.ToUpper(m.selectedOsintInputType())))
 		} else if strings.EqualFold(m.fireMode, "onchain") {
 			lines = append(lines,
@@ -3425,7 +3618,13 @@ func (m model) controlOptionsPanel(width int) string {
 			)
 		}
 	case 2:
-		if strings.EqualFold(m.fireMode, "osint") {
+		if strings.EqualFold(m.fireMode, "coop") {
+			lines = append(lines,
+				metricLine("caldera url", truncate(m.selectedCoopCalderaURL(), max(20, width-16))),
+				metricLine("operation", truncate(m.selectedCoopOperationName(), max(20, width-16))),
+				lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(coopTutorialHint(commandsByMode(m.commands, "coop"))),
+			)
+		} else if strings.EqualFold(m.fireMode, "osint") {
 			lines = append(lines, metricLine("deep engine", strings.ToUpper(m.selectedOsintDeepEngine())))
 		} else if strings.EqualFold(m.fireMode, "exploit") {
 			view := "COMMANDS"
@@ -3456,7 +3655,6 @@ func (m model) controlOptionsPanel(width int) string {
 		lines = append(lines, metricLine("replay run", m.selectedReplayRunLabel()))
 	}
 	lines = append(lines, "")
-	actions := m.activeControlActions()
 	if len(actions) == 0 {
 		lines = append(lines, "no actions available")
 		return wrap(strings.Join(lines, "\n"), width)
@@ -3471,22 +3669,19 @@ func (m model) controlOptionsPanel(width int) string {
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("available options"),
 	)
 	snap := deriveChainSnapshot(m.commands, m.findings, m.loot)
+	doneCache := map[string]bool{}
 	for i, action := range actions {
-		if i >= 12 {
-			lines = append(lines, fmt.Sprintf("+%d more actions", len(actions)-i))
-			break
-		}
 		prefix := "  "
 		if i == m.activeControlIndex() {
 			prefix = "▸ "
 		}
-		label := truncate(controlActionTaggedLabel(action, snap, m.commands), max(16, width-6))
+		label := truncate(controlActionTaggedLabel(action, snap, m.commands, doneCache), max(16, width-6))
 		lines = append(lines, prefix+styleControlOptionTags(label))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func controlActionTaggedLabel(action controlAction, snap chainSnapshot, commands []commandEntry) string {
+func controlActionTaggedLabel(action controlAction, snap chainSnapshot, commands []commandEntry, doneCache map[string]bool) string {
 	tags := []string{}
 	switch strings.ToLower(strings.TrimSpace(action.Mode)) {
 	case "kali":
@@ -3496,22 +3691,12 @@ func controlActionTaggedLabel(action controlAction, snap chainSnapshot, commands
 	case "internal":
 		tags = append(tags, "MENU")
 	}
-	if done := actionDone(action, commands); done {
+	if done := actionDoneCached(action, commands, doneCache); done {
 		tags = append(tags, "DONE")
 	} else if ok, _ := requirementsReady(action.Requires, snap); !ok {
 		tags = append(tags, "LOCKED")
 	} else if !strings.EqualFold(strings.TrimSpace(action.Mode), "internal") {
 		tags = append(tags, "READY")
-	}
-	if !strings.EqualFold(strings.TrimSpace(action.Mode), "internal") {
-		switch score := actionOpsecScore(action); {
-		case score >= 70:
-			tags = append(tags, "OPSEC-H")
-		case score >= 40:
-			tags = append(tags, "OPSEC-M")
-		default:
-			tags = append(tags, "OPSEC-L")
-		}
 	}
 	if len(tags) == 0 {
 		return action.Label
@@ -3522,6 +3707,19 @@ func controlActionTaggedLabel(action controlAction, snap chainSnapshot, commands
 	}
 	parts = append(parts, action.Label)
 	return strings.Join(parts, " ")
+}
+
+func actionDoneCached(action controlAction, commands []commandEntry, doneCache map[string]bool) bool {
+	needle := strings.ToLower(strings.TrimSpace(action.ActionID))
+	if needle == "" {
+		return false
+	}
+	if done, ok := doneCache[needle]; ok {
+		return done
+	}
+	done := actionDone(action, commands)
+	doneCache[needle] = done
+	return done
 }
 
 func styleControlOptionTags(label string) string {
@@ -3537,9 +3735,6 @@ func styleControlOptionTags(label string) string {
 		{"[KALI]", lipgloss.NewStyle().Foreground(lipgloss.Color("220"))},
 		{"[LOCAL]", lipgloss.NewStyle().Foreground(lipgloss.Color("214"))},
 		{"[MENU]", lipgloss.NewStyle().Foreground(lipgloss.Color("245"))},
-		{"[OPSEC-H]", lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)},
-		{"[OPSEC-M]", lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)},
-		{"[OPSEC-L]", lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)},
 	}
 	for _, item := range replacements {
 		out = strings.ReplaceAll(out, item.token, item.style.Render(item.token))
@@ -3676,6 +3871,34 @@ func valueOr(v, fallback string) string {
 
 func defaultTargetSuggestion() string {
 	return "http://127.0.0.1"
+}
+
+func kaliContainerName() string {
+	value := strings.TrimSpace(os.Getenv("H3RETIK_KALI_CONTAINER"))
+	if value == "" {
+		return "jsbb-kali"
+	}
+	return value
+}
+
+func kaliExecCommand(shell string) string {
+	return "docker exec " + kaliContainerName() + " bash -lc " + shellQuote(shell)
+}
+
+func defaultCoopCalderaURL() string {
+	value := strings.TrimSpace(os.Getenv("COOP_CALDERA_URL"))
+	if value == "" {
+		return "http://127.0.0.1:8888"
+	}
+	return value
+}
+
+func defaultCoopCalderaAPIKey() string {
+	value := strings.TrimSpace(os.Getenv("COOP_CALDERA_API_KEY"))
+	if value == "" {
+		return "ADMIN123"
+	}
+	return value
 }
 
 func shortTime(v string) string {
@@ -4189,6 +4412,254 @@ func (m model) selectedExploitTaxonomyNode() exploitTaxonomyNode {
 	}
 	idx := clampWrap(m.pwnedTaxIdx, len(nodes))
 	return nodes[idx]
+}
+
+func exploitSkullMapNodes() []exploitSkullMapNode {
+	return []exploitSkullMapNode{
+		{Zone: "EXT", ZoneLabel: "EXTERNAL SURFACE", Sub: "SURFACE", SubLabel: "RECON/FINGERPRINT", Description: "Recon + service exposure footprint and route baseline."},
+		{Zone: "EXT", ZoneLabel: "EXTERNAL SURFACE", Sub: "INTEL", SubLabel: "ROUTE DISCOVERY", Description: "Discovered endpoint intelligence and route expansion."},
+		{Zone: "IDA", ZoneLabel: "IDENTITY & ACCESS", Sub: "AUTH", SubLabel: "AUTH ABUSE", Description: "Credential/session boundary and auth pivot surface."},
+		{Zone: "IDA", ZoneLabel: "IDENTITY & ACCESS", Sub: "ACCESS", SubLabel: "PRIV PIVOT", Description: "API/database access lanes and privilege traversal."},
+		{Zone: "DIM", ZoneLabel: "DATA & IMPACT", Sub: "EXFIL", SubLabel: "DATA EXPOSURE", Description: "Data extraction lanes from records, files, and collections."},
+		{Zone: "DIM", ZoneLabel: "DATA & IMPACT", Sub: "TAMPER", SubLabel: "INTEGRITY IMPACT", Description: "Integrity impact, write-path tamper, and objective actions."},
+	}
+}
+
+func (m model) selectedSkullMapNode() exploitSkullMapNode {
+	nodes := exploitSkullMapNodes()
+	if len(nodes) == 0 {
+		return exploitSkullMapNode{
+			Zone: "EXT", ZoneLabel: "EXTERNAL SURFACE",
+			Sub: "SURFACE", SubLabel: "RECON/FINGERPRINT",
+		}
+	}
+	idx := clampWrap(m.archMapTaxIdx, len(nodes))
+	return nodes[idx]
+}
+
+func exploitSkullSubForNode(node attackGraphNode) string {
+	meta := strings.ToLower(strings.TrimSpace(node.ID + " " + node.Kind + " " + node.Label + " " + node.Detail + " " + node.Ref))
+	switch {
+	case strings.Contains(meta, "impact"), strings.Contains(meta, "objective"), strings.Contains(meta, "tamper"), strings.Contains(meta, "write"):
+		return "TAMPER"
+	case node.Kind == "collection", node.Kind == "record", strings.Contains(meta, "file lane"), strings.Contains(meta, "artifact"), strings.Contains(meta, "backup"), strings.Contains(meta, "exfil"), strings.Contains(meta, "dump"), strings.Contains(meta, "download"):
+		return "EXFIL"
+	case strings.Contains(meta, "auth"):
+		return "AUTH"
+	case strings.Contains(meta, "api lane"), strings.Contains(meta, "db lane"), strings.HasPrefix(strings.ToLower(strings.TrimSpace(node.ID)), "api-endpoint-"), strings.Contains(meta, "collection"), strings.Contains(meta, "record"):
+		return "ACCESS"
+	case node.Kind == "endpoint", strings.Contains(meta, "intel"):
+		return "INTEL"
+	default:
+		return "SURFACE"
+	}
+}
+
+func filterExploitGraphBySkullNode(nodes []attackGraphNode, selected exploitSkullMapNode) []attackGraphNode {
+	if len(nodes) == 0 || strings.TrimSpace(selected.Sub) == "" {
+		return nodes
+	}
+	parentByID := map[string]string{}
+	for _, node := range nodes {
+		parentByID[node.ID] = strings.TrimSpace(node.Parent)
+	}
+	keep := map[string]bool{}
+	for _, node := range nodes {
+		if !strings.EqualFold(exploitSkullSubForNode(node), selected.Sub) {
+			continue
+		}
+		keep[node.ID] = true
+		parent := strings.TrimSpace(node.Parent)
+		for parent != "" {
+			if keep[parent] {
+				break
+			}
+			keep[parent] = true
+			parent = strings.TrimSpace(parentByID[parent])
+		}
+	}
+	if len(keep) == 0 {
+		for _, node := range nodes {
+			if strings.TrimSpace(node.Parent) == "" {
+				return []attackGraphNode{node}
+			}
+		}
+		return nodes
+	}
+	filtered := make([]attackGraphNode, 0, len(nodes))
+	for _, node := range nodes {
+		if keep[node.ID] {
+			filtered = append(filtered, node)
+		}
+	}
+	filtered = normalizeAttackGraphDepth(filtered)
+	if len(filtered) == 0 {
+		return nodes
+	}
+	return filtered
+}
+
+func normalizeAttackGraphDepth(nodes []attackGraphNode) []attackGraphNode {
+	if len(nodes) == 0 {
+		return nodes
+	}
+	indexByID := map[string]int{}
+	for idx, node := range nodes {
+		indexByID[node.ID] = idx
+	}
+	memo := map[string]int{}
+	var depthFor func(id string, stack map[string]bool) int
+	depthFor = func(id string, stack map[string]bool) int {
+		if cached, ok := memo[id]; ok {
+			return cached
+		}
+		idx, ok := indexByID[id]
+		if !ok {
+			return 0
+		}
+		parent := strings.TrimSpace(nodes[idx].Parent)
+		if parent == "" {
+			memo[id] = 0
+			return 0
+		}
+		if stack[id] {
+			return 0
+		}
+		stack[id] = true
+		parentDepth := depthFor(parent, stack)
+		delete(stack, id)
+		depth := parentDepth + 1
+		memo[id] = depth
+		return depth
+	}
+	out := make([]attackGraphNode, 0, len(nodes))
+	for _, node := range nodes {
+		next := node
+		next.Depth = depthFor(node.ID, map[string]bool{})
+		out = append(out, next)
+	}
+	return out
+}
+
+func exploitSkullPwnState(nodes []attackGraphNode, commands []commandEntry, findings []findingEntry, loot []lootEntry) map[string]bool {
+	state := map[string]bool{
+		"SURFACE": false,
+		"INTEL":   false,
+		"AUTH":    false,
+		"ACCESS":  false,
+		"EXFIL":   false,
+		"TAMPER":  false,
+	}
+	for _, node := range nodes {
+		sub := exploitSkullSubForNode(node)
+		if strings.TrimSpace(sub) == "" {
+			continue
+		}
+		if node.Pwned {
+			state[sub] = true
+		}
+	}
+	snap := deriveChainSnapshot(commands, findings, loot)
+	if snap.Recon {
+		state["SURFACE"] = true
+	}
+	if snap.Breach {
+		state["AUTH"] = true
+	}
+	if snap.Access {
+		state["ACCESS"] = true
+	}
+	if snap.Exfil {
+		state["EXFIL"] = true
+	}
+	if snap.Tamper {
+		state["TAMPER"] = true
+	}
+	if hasLootMatch(loot, "/api/") || hasFindingMatch(findings, "endpoint") || hasFindingMatch(findings, "surface") {
+		state["INTEL"] = true
+	}
+	return state
+}
+
+func skullPwnBadge(pwned bool) string {
+	if pwned {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("160")).Bold(true).Padding(0, 1).Render("PWN")
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("151")).Bold(true).Padding(0, 1).Render("OPEN")
+}
+
+func renderExploitSkullMapMenu(current exploitSkullMapNode, pwn map[string]bool, treeFocus bool, width int) string {
+	nodes := exploitSkullMapNodes()
+	lines := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		prefix := "  "
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+		if strings.EqualFold(node.Sub, current.Sub) {
+			prefix = "▸ "
+			if treeFocus {
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Bold(true)
+			} else {
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
+			}
+		}
+		line := fmt.Sprintf("%s%s / %s %s", prefix, node.ZoneLabel, node.SubLabel, skullPwnBadge(pwn[node.Sub]))
+		lines = append(lines, style.Render(line))
+	}
+	return wrap(strings.Join(lines, "\n"), width)
+}
+
+func renderExploitSkullASCII(current exploitSkullMapNode, pwn map[string]bool, treeFocus bool) string {
+	lines := strings.Split(strings.TrimPrefix(skullTaxonomyASCII, "\n"), "\n")
+	if len(lines) < 23 {
+		return skullTaxonomyASCII
+	}
+
+	frontalPwn := pwn["SURFACE"] || pwn["INTEL"]
+	midPwn := pwn["AUTH"] || pwn["ACCESS"]
+	jawPwn := pwn["EXFIL"] || pwn["TAMPER"]
+
+	lines[3] = replacePrefix(lines[3], 14, skullMainLabel("EXT SURFACE", 14, frontalPwn, strings.EqualFold(current.Zone, "EXT"), treeFocus))
+	lines[4] = replacePrefix(lines[4], 14, strings.Repeat(" ", 14))
+	lines[10] = replacePrefix(lines[10], 13, strings.Repeat(" ", 13))
+	lines[11] = replacePrefix(lines[11], 13, skullMainLabel("ID+ACCESS", 13, midPwn, strings.EqualFold(current.Zone, "IDA"), treeFocus))
+	lines[12] = replacePrefix(lines[12], 13, strings.Repeat(" ", 13))
+	lines[13] = replacePrefix(lines[13], 13, strings.Repeat(" ", 13))
+	lines[18] = replacePrefix(lines[18], 16, skullMainLabel("DATA/IMPACT", 16, jawPwn, strings.EqualFold(current.Zone, "DIM"), treeFocus))
+
+	lines[3] = replaceAfterMarker(lines[3], ",--- ", skullSubLabel("RECON/FINGERPRINT", pwn["SURFACE"], strings.EqualFold(current.Sub, "SURFACE"), treeFocus))
+	lines[7] = replaceAfterMarker(lines[7], "<----- ", skullSubLabel("ROUTE DISCOVERY", pwn["INTEL"], strings.EqualFold(current.Sub, "INTEL"), treeFocus))
+	lines[10] = replaceAfterMarker(lines[10], "<------ ", skullSubLabel("AUTH ABUSE", pwn["AUTH"], strings.EqualFold(current.Sub, "AUTH"), treeFocus))
+	lines[13] = replaceAfterMarker(lines[13], "<--------- ", skullSubLabel("PRIV PIVOT", pwn["ACCESS"], strings.EqualFold(current.Sub, "ACCESS"), treeFocus))
+	lines[15] = replaceAfterMarker(lines[15], "<--- ", skullSubLabel("EXFIL", pwn["EXFIL"], strings.EqualFold(current.Sub, "EXFIL"), treeFocus))
+	lines[20] = replaceAfterMarker(lines[20], "<-x---- ", skullSubLabel("INTEGRITY IMPACT", pwn["TAMPER"], strings.EqualFold(current.Sub, "TAMPER"), treeFocus))
+	return strings.Join(lines, "\n")
+}
+
+func skullMainLabel(label string, width int, pwned bool, selected bool, treeFocus bool) string {
+	text := fmt.Sprintf("%-*s", width, label)
+	switch {
+	case selected && !treeFocus:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true).Render(text)
+	case selected && treeFocus:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Bold(true).Render(text)
+	case pwned:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("160")).Bold(true).Render(text)
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true).Render(text)
+	}
+}
+
+func skullSubLabel(label string, pwned bool, selected bool, treeFocus bool) string {
+	switch {
+	case selected && !treeFocus:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true).Render(label)
+	case selected && treeFocus:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Bold(true).Render(label)
+	case pwned:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("160")).Bold(true).Render(label)
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true).Render(label)
+	}
 }
 
 func severityWeight(sev string) int {
@@ -5975,6 +6446,12 @@ func commandMode(entry commandEntry) string {
 			return "osint"
 		}
 	}
+	coopMarkers := []string{"coop", "caldera", "/api/agents", "/api/operations", "sandcat", "stockpile"}
+	for _, marker := range coopMarkers {
+		if strings.Contains(meta, marker) {
+			return "coop"
+		}
+	}
 	return "exploit"
 }
 
@@ -6033,7 +6510,7 @@ func findingsByMode(findings []findingEntry, mode string) []findingEntry {
 	if mode == "" || mode == "exploit" {
 		out := make([]findingEntry, 0, len(findings))
 		for _, entry := range findings {
-			if !isOSINTFinding(entry) && !isOnchainFinding(entry) {
+			if !isOSINTFinding(entry) && !isOnchainFinding(entry) && !isCoopFinding(entry) {
 				out = append(out, entry)
 			}
 		}
@@ -6045,6 +6522,9 @@ func findingsByMode(findings []findingEntry, mode string) []findingEntry {
 			out = append(out, entry)
 		}
 		if mode == "onchain" && isOnchainFinding(entry) {
+			out = append(out, entry)
+		}
+		if mode == "coop" && isCoopFinding(entry) {
 			out = append(out, entry)
 		}
 	}
@@ -6064,8 +6544,12 @@ func findingDisplayOrderByMode(findings []findingEntry, mode string) []int {
 			if isOnchainFinding(entry) {
 				order = append(order, idx)
 			}
+		case "coop":
+			if isCoopFinding(entry) {
+				order = append(order, idx)
+			}
 		default:
-			if !isOSINTFinding(entry) && !isOnchainFinding(entry) {
+			if !isOSINTFinding(entry) && !isOnchainFinding(entry) && !isCoopFinding(entry) {
 				order = append(order, idx)
 			}
 		}
@@ -6086,8 +6570,12 @@ func lootByMode(loot []lootEntry, mode string) []lootEntry {
 			if isOnchainLoot(entry) {
 				out = append(out, entry)
 			}
+		case "coop":
+			if isCoopLoot(entry) {
+				out = append(out, entry)
+			}
 		default:
-			if !isOSINTLoot(entry) && !isOnchainLoot(entry) {
+			if !isOSINTLoot(entry) && !isOnchainLoot(entry) && !isCoopLoot(entry) {
 				out = append(out, entry)
 			}
 		}
@@ -6117,6 +6605,17 @@ func isOnchainFinding(entry findingEntry) bool {
 	return false
 }
 
+func isCoopFinding(entry findingEntry) bool {
+	meta := strings.ToLower(entry.Title + " " + entry.Endpoint + " " + entry.Impact + " " + entry.Evidence)
+	markers := []string{"caldera", "coop", "c2", "sandcat", "stockpile", "operation", "agent"}
+	for _, marker := range markers {
+		if strings.Contains(meta, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func modeDigest(mode string, findings []findingEntry, loot []lootEntry, width int) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "osint":
@@ -6134,6 +6633,27 @@ func modeDigest(mode string, findings []findingEntry, loot []lootEntry, width in
 			metricLine("onchain findings", fmt.Sprintf("%d", len(findings))),
 			metricLine("onchain loot", fmt.Sprintf("%d", len(loot))),
 			metricLine("flow artifacts", fmt.Sprintf("%d", countOnchainFlowArtifacts(loot))),
+		}
+		if len(loot) > 0 {
+			lines = append(lines, "latest :: "+truncate(loot[0].Name, max(18, width-12)))
+		}
+		return strings.Join(lines, "\n")
+	case "coop":
+		agents := 0
+		operations := 0
+		for _, item := range loot {
+			meta := strings.ToLower(item.Name + " " + item.Source + " " + item.Preview)
+			if strings.Contains(meta, "agent") {
+				agents++
+			}
+			if strings.Contains(meta, "operation") {
+				operations++
+			}
+		}
+		lines := []string{
+			metricLine("co-op findings", fmt.Sprintf("%d", len(findings))),
+			metricLine("co-op loot", fmt.Sprintf("%d", len(loot))),
+			metricLine("agents/ops", fmt.Sprintf("%d/%d", agents, operations)),
 		}
 		if len(loot) > 0 {
 			lines = append(lines, "latest :: "+truncate(loot[0].Name, max(18, width-12)))
@@ -6179,6 +6699,18 @@ func modeTargetGraph(mode string, state stateFile, findings []findingEntry, loot
 		}
 		if len(lines) == 1 {
 			lines = append(lines, "artifact -> pending")
+		}
+		return wrap(strings.Join(lines, " | "), width)
+	case "coop":
+		lines := []string{"operator -> caldera-c2"}
+		for i, item := range loot {
+			if i >= 5 {
+				break
+			}
+			lines = append(lines, "caldera-c2 -> "+truncate(item.Name, 36))
+		}
+		if len(lines) == 1 {
+			lines = append(lines, "caldera-c2 -> sync pending")
 		}
 		return wrap(strings.Join(lines, " | "), width)
 	default:
@@ -7166,7 +7698,7 @@ func renderExploitAttackGraphASCII(nodes []attackGraphNode, edges []attackGraphE
 	}
 	legendA := truncate("legend: [-] open folder  [+] collapsed folder  [·] leaf", max(20, width-2))
 	legendB := truncate("legend: [OPEN]/[PWN] status  [DIR]/[ENDPOINT]/[COLLECT]/[RECORD] type", max(20, width-2))
-	legendC := truncate("nav: ↑/↓ tree  ← parent/collapse  → expand/child  h/l collapse-expand  ,/. cycle action  Enter preview  f run", max(20, width-2))
+	legendC := truncate("tree nav: ↑/↓ tree  ← parent/collapse  → expand/child  h/l collapse-expand  ,/. cycle action  Enter preview  f run", max(20, width-2))
 	lines = append(lines,
 		"",
 		legendA,
@@ -7304,6 +7836,16 @@ func modeChainBoard(mode string, commands []commandEntry, findings []findingEntr
 			fmt.Sprintf("%s FUZZ", statusBadge(ternary(fuzz, "done", "idle"))),
 		}
 		return wrap(strings.Join(lines, " | "), width)
+	case "coop":
+		c2 := hasCommandMatch(commands, "coop-caldera-up") || hasCommandMatch(commands, "coop-caldera-status")
+		agents := hasCommandMatch(commands, "/api/agents") || hasCommandMatch(commands, "op-report")
+		ops := hasCommandMatch(commands, "/api/operations") || hasCommandMatch(commands, "op-report")
+		lines := []string{
+			fmt.Sprintf("%s C2", statusBadge(ternary(c2, "done", "idle"))),
+			fmt.Sprintf("%s AGENTS", statusBadge(ternary(agents, "done", "idle"))),
+			fmt.Sprintf("%s OPS", statusBadge(ternary(ops, "done", "idle"))),
+		}
+		return wrap(strings.Join(lines, " | "), width)
 	default:
 		return attackChainBoard(commands, findings, loot, width)
 	}
@@ -7341,6 +7883,20 @@ func modeWorkflowBoard(mode string, commands []commandEntry, findings []findingE
 			fmt.Sprintf("%s EXPORT", statusBadge(ternary(reporting, "done", "idle"))),
 		}
 		return wrap(strings.Join(lines, " | "), width)
+	case "coop":
+		launch := hasCommandMatch(commands, "coop-caldera-up")
+		status := hasCommandMatch(commands, "coop-caldera-status")
+		agents := hasCommandMatch(commands, "/api/agents") || hasCommandMatch(commands, "op-report")
+		operations := hasCommandMatch(commands, "/api/operations") || hasCommandMatch(commands, "op-report")
+		report := hasCommandMatch(commands, "coop-caldera-op-report")
+		lines := []string{
+			fmt.Sprintf("%s CALDERA", statusBadge(ternary(launch, "done", "idle"))),
+			fmt.Sprintf("%s STATUS", statusBadge(ternary(status, "done", "idle"))),
+			fmt.Sprintf("%s AGENTS", statusBadge(ternary(agents, "done", "idle"))),
+			fmt.Sprintf("%s OPERATIONS", statusBadge(ternary(operations, "done", "idle"))),
+			fmt.Sprintf("%s REPORT", statusBadge(ternary(report, "done", "idle"))),
+		}
+		return wrap(strings.Join(lines, " | "), width)
 	default:
 		recon := hasCommandMatch(commands, "recon") || hasCommandMatch(commands, "nmap")
 		access := hasCommandMatch(commands, "sqlmap") || hasCommandMatch(commands, "ffuf") || hasCommandMatch(commands, "gobuster")
@@ -7364,6 +7920,8 @@ func modeOperatorProfile(mode string) string {
 		return "INVESTIGATIVE JOURNALIST"
 	case "onchain":
 		return "ONCHAIN AUDITOR"
+	case "coop":
+		return "CO-OP C2 OPERATOR"
 	default:
 		return "RED TEAM OPERATOR"
 	}
@@ -7396,6 +7954,13 @@ func modeRunbook(mode, targetURL, osintSeed, onchainTarget, network string, comm
 			"3) slither/mythril then echidna/medusa/halmos",
 		}
 		return wrap(strings.Join(steps, " | "), width)
+	case "coop":
+		steps := []string{
+			"1) launch CALDERA + status check",
+			"2) list agents + operations (C2 health)",
+			"3) save co-op report artifact for shared evidence",
+		}
+		return wrap(strings.Join(steps, " | "), width)
 	default:
 		return operatorRunbook(targetURL, commands, findings, loot, width)
 	}
@@ -7415,6 +7980,13 @@ func modeNextOps(mode string, commands []commandEntry, findings []findingEntry, 
 			"if rpc missing -> onchain-rpc-check",
 			"if flow missing -> onchain-address-flow",
 			"if audit missing -> slither/mythril then fuzzers",
+		}
+		return wrap(strings.Join(lines, " | "), width)
+	case "coop":
+		lines := []string{
+			"if c2 down -> run coop-caldera-up",
+			"if visibility missing -> pull agents + operations",
+			"if sharing needed -> run coop-caldera-op-report",
 		}
 		return wrap(strings.Join(lines, " | "), width)
 	default:
@@ -7720,18 +8292,320 @@ func exploitMissionHUDStrip(commands []commandEntry, findings []findingEntry, lo
 	}, "\n")
 }
 
-func actionOpsecScore(action controlAction) int {
-	meta := strings.ToLower(strings.TrimSpace(action.Command + " " + action.KaliShell + " " + action.Label))
-	switch {
-	case strings.Contains(meta, "delete"), strings.Contains(meta, "update "), strings.Contains(meta, "insert "), strings.Contains(meta, "drop "), strings.Contains(meta, "-x put"), strings.Contains(meta, "-x patch"), strings.Contains(meta, "msfconsole"), strings.Contains(meta, "sqlmap"), strings.Contains(meta, "brute"), strings.Contains(meta, "spray"):
-		return 85
-	case strings.Contains(meta, "nmap"), strings.Contains(meta, "nikto"), strings.Contains(meta, "nuclei"), strings.Contains(meta, "ffuf"), strings.Contains(meta, "gobuster"), strings.Contains(meta, "hydra"), strings.Contains(meta, "medusa"):
-		return 65
-	case strings.Contains(meta, "curl -ssi"), strings.Contains(meta, "curl -ss"), strings.Contains(meta, "show"), strings.Contains(meta, "inspect"), strings.Contains(meta, "jq "), strings.Contains(meta, "sed -n"):
-		return 25
-	default:
-		return 45
+func exploitAchievements(commands []commandEntry, findings []findingEntry, loot []lootEntry) []exploitAchievement {
+	snap := deriveChainSnapshot(commands, findings, loot)
+	stats := exploitMissionMetrics(commands, findings, loot)
+	success, fail := 0, 0
+	for _, cmd := range commands {
+		switch strings.ToLower(strings.TrimSpace(cmd.Status)) {
+		case "ok", "done", "complete", "completed":
+			success++
+		case "error", "failed", "fail":
+			fail++
+		}
 	}
+	evidenceCaptured := hasCommandMatch(commands, "telemetryctl.py snapshot") || hasLootMatch(loot, "snapshot")
+	allStages := snap.Recon && snap.Breach && snap.Access && snap.Exfil && snap.Tamper && snap.PrivEsc
+	return []exploitAchievement{
+		{ID: "surface-mapper", Name: "Surface Mapper", Hint: "Complete recon and route discovery baseline.", Points: 10, Unlocked: snap.Recon},
+		{ID: "breach-confirmed", Name: "Breach Confirmed", Hint: "Demonstrate exploit or auth-boundary break.", Points: 15, Unlocked: snap.Breach},
+		{ID: "pivot-proof", Name: "Privileged Pivot", Hint: "Prove privileged/API access with usable creds or token.", Points: 20, Unlocked: snap.Access},
+		{ID: "data-exposure", Name: "Data Exposure", Hint: "Capture high-value artifacts or dataset extracts.", Points: 20, Unlocked: snap.Exfil},
+		{ID: "integrity-impact", Name: "Integrity Impact", Hint: "Show controlled state change with evidence.", Points: 25, Unlocked: snap.Tamper},
+		{ID: "privesc-path", Name: "Escalation Path", Hint: "Validate privilege-escalation pathing post foothold.", Points: 20, Unlocked: snap.PrivEsc},
+		{ID: "low-noise", Name: "Low-Noise Operator", Hint: "Keep noise <=35 while progressing access.", Points: 15, Unlocked: stats.NoiseScore <= 35 && (snap.Breach || snap.Access)},
+		{ID: "evidence-discipline", Name: "Evidence Discipline", Hint: "Capture operation snapshots/replay evidence.", Points: 10, Unlocked: evidenceCaptured},
+		{ID: "full-chain", Name: "Chain Dominance", Hint: "Complete all chain stages in one operation context.", Points: 40, Unlocked: allStages},
+		{ID: "steady-exec", Name: "Steady Execution", Hint: "Maintain positive success/fail command ratio.", Points: 10, Unlocked: success > 0 && success >= fail},
+	}
+}
+
+func exploitAchievementTotals(items []exploitAchievement) (unlocked, total, points int) {
+	total = len(items)
+	for _, item := range items {
+		if item.Unlocked {
+			unlocked++
+			points += item.Points
+		}
+	}
+	return unlocked, total, points
+}
+
+func exploitAchievementBoard(commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
+	items := exploitAchievements(commands, findings, loot)
+	unlocked, total, points := exploitAchievementTotals(items)
+	lines := []string{
+		metricLine("unlocked", fmt.Sprintf("%d/%d", unlocked, total)),
+		metricLine("score", fmt.Sprintf("%d", points)),
+	}
+	nextHint := ""
+	for _, item := range items {
+		marker := statusBadge(ternary(item.Unlocked, "done", "idle"))
+		lines = append(lines, fmt.Sprintf("%s %s (+%d)", marker, item.Name, item.Points))
+		if nextHint == "" && !item.Unlocked {
+			nextHint = item.Hint
+		}
+		if len(lines) >= 8 {
+			break
+		}
+	}
+	if nextHint != "" {
+		lines = append(lines, "next unlock :: "+nextHint)
+	}
+	return wrap(strings.Join(lines, " | "), width)
+}
+
+func exploitGamificationMechanics(commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
+	stats := exploitMissionMetrics(commands, findings, loot)
+	success, fail := 0, 0
+	for _, cmd := range commands {
+		switch strings.ToLower(strings.TrimSpace(cmd.Status)) {
+		case "ok", "done", "complete", "completed":
+			success++
+		case "error", "failed", "fail":
+			fail++
+		}
+	}
+	totalOutcomes := success + fail
+	successRate := 50
+	if totalOutcomes > 0 {
+		successRate = (success * 100) / totalOutcomes
+	}
+	reward := (stats.Exploitability*6)/10 + stats.DoneStages*8 + min(20, len(loot)*2) + min(20, countSeverity(findings, "critical")*6+countSeverity(findings, "high")*3)
+	risk := (stats.RiskScore*7)/10 + (stats.NoiseScore*3)/10 + min(20, fail*4)
+	momentum := (successRate*50)/100 + stats.ProgressPct/2 + max(0, 20-fail*3)
+	reward = clamp(reward, 0, 100)
+	risk = clamp(risk, 0, 100)
+	momentum = clamp(momentum, 0, 100)
+	decision := reward - risk + momentum/4
+	decision = clamp(decision, 0, 100)
+	lines := []string{
+		metricLine("reward", fmt.Sprintf("%d/100", reward)),
+		metricLine("risk", fmt.Sprintf("%d/100", risk)),
+		metricLine("momentum", fmt.Sprintf("%d/100", momentum)),
+		metricLine("decision score", fmt.Sprintf("%d/100", decision)),
+		metricLine("score bar", progressBar(decision, 10)),
+	}
+	return wrap(strings.Join(lines, " | "), width)
+}
+
+func scoreGrade(score int) string {
+	score = clamp(score, 0, 100)
+	switch {
+	case score >= 90:
+		return "S"
+	case score >= 80:
+		return "A"
+	case score >= 70:
+		return "B"
+	case score >= 60:
+		return "C"
+	case score >= 45:
+		return "D"
+	default:
+		return "E"
+	}
+}
+
+func ratingDeltasFromMeta(meta string) (int, int, string) {
+	match := func(terms ...string) bool {
+		meta = strings.ToLower(strings.TrimSpace(meta))
+		for _, term := range terms {
+			if strings.Contains(meta, strings.ToLower(strings.TrimSpace(term))) {
+				return true
+			}
+		}
+		return false
+	}
+	hasNetwork := match("http://", "https://", "curl ", "wget ", "nc ", "ncat ", "ssh ", "ftp ", "smb", "ldap", "rpc", "dns")
+	hasAuth := match("authorization", "bearer", "token", "jwt", " -u ", "username=", "password", "login", "auth", "apikey", "api-key", "cookie")
+	hasMutation := match(" put ", " patch ", " delete ", " update ", " insert ", " drop ", " alter ", " create ", "-x put", "-x patch", "-x delete", "--data ", " --data ")
+	hasAggressive := match("brute", "spray", "fuzz", "burst", "wordlist", "crawl=", "threads", "parallel", "xargs -p", "for ")
+	hasExploit := match("exploit", "payload", "inject", "sqli", "rce", "xss", "ssrf", "traversal", "idor", "command injection")
+	hasExfil := match("dump", "backup", "exfil", "export", "download", "artifact", "collection", "record", "snapshot", "pg_dump", "mysqldump", "sqlite3")
+	hasDiscovery := match("recon", "enumeration", "enum", "discover", "openapi", "surface-map", "web-enum", "api-probe", "scan", "probe", "fingerprint", "list")
+	hasPassive := match("curl -ssi", "curl -ss", "curl -i", "head ", "options ", "show", "inspect", "cat ", "jq ", "sed -n", "grep ", "awk ")
+	switch {
+	case strings.TrimSpace(meta) == "":
+		return 0, 0, "neutral"
+	case match(
+		"targetctl.py set", "targetctl.py info", "targetctl.py start",
+		"docker compose up", "docker compose down", "h3retik up", "h3retik down",
+		"control-target", "target:manual", "target:inner", "target:onchain", "target:osint",
+		"doctor", "stack-check", "switch mode", "mode ->",
+	):
+		return 0, 0, "control"
+	case match("telemetryctl.py snapshot", "telemetryctl.py show", "snapshot", "report export"):
+		return 1, 1, "evidence"
+	case hasMutation:
+		return 7, 9, "mutation"
+	case hasAuth && hasAggressive:
+		return 9, 10, "auth-attack"
+	case hasExploit && hasNetwork:
+		return 8, 7, "exploit"
+	case match("privesc", "post-enum", "lateral-pivot", "full-escalation") || (hasNetwork && match("smb", "ldap", "rpc", "ssh")):
+		return 7, 6, "pivot"
+	case hasExfil:
+		return 6, 5, "exfil"
+	case hasNetwork && hasDiscovery:
+		return 4, 4, "discovery"
+	case hasNetwork && hasPassive:
+		return 2, 1, "passive"
+	default:
+		return 3, 3, "general"
+	}
+}
+
+func commandOpsecScore(cmd commandEntry) int {
+	_, opsecDelta, _ := ratingDeltasFromMeta(cmd.Tool + " " + cmd.Command)
+	return clamp(opsecDelta*10, 0, 100)
+}
+
+func exploitCampaignRatings(commands []commandEntry, findings []findingEntry, loot []lootEntry) exploitCampaignRating {
+	snap := deriveChainSnapshot(commands, findings, loot)
+	traceSum := 0
+	noisyActions := 0
+	mutatingActions := 0
+	authActions := 0
+	failures := 0
+	repeats := 0
+	commandSeen := map[string]int{}
+	for _, cmd := range commands {
+		meta := strings.ToLower(strings.TrimSpace(cmd.Command + " " + cmd.Tool))
+		_, opsecDelta, class := ratingDeltasFromMeta(meta)
+		trace := opsecDelta
+		if class == "discovery" || class == "auth-attack" || class == "exploit" {
+			noisyActions++
+		}
+		if class == "mutation" {
+			mutatingActions++
+		}
+		if class == "auth-attack" || strings.Contains(meta, "authorization: bearer") || strings.Contains(meta, " -u ") || strings.Contains(meta, "login") || strings.Contains(meta, "auth") || strings.Contains(meta, "token") {
+			authActions++
+		}
+		switch strings.ToLower(strings.TrimSpace(cmd.Status)) {
+		case "error", "failed", "fail":
+			failures++
+			trace += 2
+		}
+		signature := strings.ToLower(strings.TrimSpace(cmd.Tool + "::" + cmd.Command))
+		if signature != "" {
+			commandSeen[signature]++
+			if commandSeen[signature] > 1 {
+				repeats++
+				trace += 1
+			}
+		}
+		traceSum += trace
+	}
+	volumePenalty := 0
+	if len(commands) > 6 {
+		volumePenalty = min(12, (len(commands)-6)/2)
+	}
+	traceBurden := (traceSum * 3) / 4
+	traceBurden += volumePenalty + min(8, failures*2) + min(8, repeats)
+	traceBurden = clamp(traceBurden, 0, 100)
+	opsecScore := 100 - traceBurden
+
+	pwnedScore := 0
+	if snap.Recon {
+		pwnedScore += 12
+	}
+	if snap.Breach {
+		pwnedScore += 20
+	}
+	if snap.Access {
+		pwnedScore += 22
+	}
+	if snap.Exfil {
+		pwnedScore += 18
+	}
+	if snap.Tamper {
+		pwnedScore += 18
+	}
+	if snap.PrivEsc {
+		pwnedScore += 10
+	}
+	if hasLootMatch(loot, "credential") || hasLootMatch(loot, "token") || hasLootMatch(loot, "hash") {
+		pwnedScore += 4
+	}
+	if hasLootMatch(loot, "database") || hasLootMatch(loot, ".db") || hasLootMatch(loot, "collection") || hasLootMatch(loot, "record") {
+		pwnedScore += 4
+	}
+	if hasLootMatch(loot, "artifact") || hasLootMatch(loot, "backup") || hasLootMatch(loot, "document") || hasLootMatch(loot, "binary") {
+		pwnedScore += 3
+	}
+	pwnedScore += min(8, countSeverity(findings, "critical")*4)
+	pwnedScore += min(5, countSeverity(findings, "high"))
+	if snap.Tamper && hasFindingMatch(findings, "integrity") {
+		pwnedScore += 2
+	}
+	pwnedScore = clamp(pwnedScore, 0, 100)
+
+	return exploitCampaignRating{
+		OpsecScore:      opsecScore,
+		PwnedScore:      pwnedScore,
+		TraceBurden:     traceBurden,
+		NoisyActions:    noisyActions,
+		MutatingActions: mutatingActions,
+		AuthActions:     authActions,
+	}
+}
+
+func exploitCampaignRatingsBoard(commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
+	ratings := exploitCampaignRatings(commands, findings, loot)
+	lines := []string{
+		metricLine("opsec rating", fmt.Sprintf("%d/100 [%s] %s", ratings.OpsecScore, scoreGrade(ratings.OpsecScore), progressBar(ratings.OpsecScore, 8))),
+		metricLine("pwned rating", fmt.Sprintf("%d/100 [%s] %s", ratings.PwnedScore, scoreGrade(ratings.PwnedScore), progressBar(ratings.PwnedScore, 8))),
+	}
+	return wrap(strings.Join(lines, " | "), width)
+}
+
+func exploitActionOpsecBoard(commands []commandEntry, width int) string {
+	if len(commands) == 0 {
+		return "no actions executed yet"
+	}
+	lines := []string{}
+	limit := min(6, len(commands))
+	for i := 0; i < limit; i++ {
+		cmd := commands[i]
+		traceScore := commandOpsecScore(cmd)
+		opsecScore := clamp(100-traceScore, 0, 100)
+		lines = append(lines, fmt.Sprintf("%s %3d %s", scoreGrade(opsecScore), opsecScore, truncate(cmd.Tool+" :: "+cmd.Command, max(24, width-18))))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func actionOpsecScore(action controlAction) int {
+	_, opsecDelta, _ := ratingDeltasFromMeta(action.Label + " " + action.Command + " " + action.KaliShell + " " + action.Group + " " + action.ActionID)
+	return clamp(opsecDelta*10, 0, 100)
+}
+
+func actionEffectiveOpsecScore(action controlAction, commands []commandEntry) int {
+	predicted := actionOpsecScore(action)
+	needle := strings.ToLower(strings.TrimSpace(action.ActionID))
+	if needle == "" || len(commands) == 0 {
+		return predicted
+	}
+	observedSum := 0
+	observedCount := 0
+	for _, cmd := range commands {
+		if !commandMatchesAction(cmd, needle) {
+			continue
+		}
+		observedSum += commandOpsecScore(cmd)
+		observedCount++
+	}
+	if observedCount == 0 {
+		return predicted
+	}
+	observed := observedSum / observedCount
+	weightObserved := 60
+	if observedCount >= 3 {
+		weightObserved = 70
+	}
+	weightPredicted := 100 - weightObserved
+	return clamp((predicted*weightPredicted+observed*weightObserved)/100, 0, 100)
 }
 
 func exploitNextBestAction(commands []commandEntry, findings []findingEntry, loot []lootEntry, targetURL string) (string, int) {
@@ -8036,7 +8910,7 @@ func isOSINTLoot(item lootEntry) bool {
 	if strings.Contains(meta, "artifacts/osint/") || strings.Contains(meta, "/artifacts/osint/") {
 		return true
 	}
-	antiMarkers := []string{"nmap", "nikto", "ffuf", "gobuster", "nuclei", "sqlmap", "hydra", "msfconsole", "xss", "sqli"}
+	antiMarkers := []string{"nmap", "nikto", "ffuf", "gobuster", "nuclei", "sqlmap", "hydra", "msfconsole", "xss", "sqli", "caldera", "coop-caldera", "sandcat", "stockpile"}
 	for _, marker := range antiMarkers {
 		if strings.Contains(meta, marker) {
 			return false
@@ -8063,6 +8937,20 @@ func isOnchainLoot(item lootEntry) bool {
 		"onchain result", "slither", "mythril", "myth", "forge", "cast", "anvil",
 		"echidna", "medusa", "halmos", "smart contract", "evm", "solidity", "bytecode", "address-flow", "rpc-check", "rpc-catalog", "4d correlation",
 	}
+	for _, marker := range markers {
+		if strings.Contains(meta, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCoopLoot(item lootEntry) bool {
+	meta := strings.ToLower(item.Kind + " " + item.Name + " " + item.Source + " " + item.Preview)
+	if strings.Contains(meta, "artifacts/coop/") || strings.Contains(meta, "/artifacts/coop/") {
+		return true
+	}
+	markers := []string{"caldera", "coop", "c2", "sandcat", "stockpile", "operation", "agent"}
 	for _, marker := range markers {
 		if strings.Contains(meta, marker) {
 			return true
@@ -9973,6 +10861,42 @@ func (m model) selectedOnchainProfile() onchainNetworkProfile {
 	return onchainProfileByKey(m.onchainNetworkInput)
 }
 
+func (m model) selectedCoopCalderaURL() string {
+	value := strings.TrimSpace(m.coopCalderaURL)
+	if value == "" {
+		return defaultCoopCalderaURL()
+	}
+	return value
+}
+
+func (m model) selectedCoopCalderaAPIKey() string {
+	value := strings.TrimSpace(m.coopCalderaAPIKey)
+	if value == "" {
+		return defaultCoopCalderaAPIKey()
+	}
+	return value
+}
+
+func (m model) selectedCoopOperationName() string {
+	value := strings.TrimSpace(m.coopOperationName)
+	if value == "" {
+		return "h3retik-operation"
+	}
+	return value
+}
+
+func (m model) selectedCoopAgentGroup() string {
+	value := strings.TrimSpace(m.coopAgentGroup)
+	if value == "" {
+		return "red"
+	}
+	return value
+}
+
+func (m model) coopCalderaEnvPrefix() string {
+	return "COOP_CALDERA_URL=" + shellQuote(m.selectedCoopCalderaURL()) + " COOP_CALDERA_API_KEY=" + shellQuote(m.selectedCoopCalderaAPIKey())
+}
+
 func onchainRPCHost(raw string) string {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed.Host == "" {
@@ -10317,6 +11241,15 @@ func renderPipelineLegend(selected string, width int) string {
 }
 
 func renderFireModeGuide(mode, exploitPipeline, deepEngine string, width int) string {
+	if strings.EqualFold(mode, "coop") {
+		lines := []string{
+			metricLine("mode", "CO-OP (CALDERA C2)"),
+			metricLine("chain", "Caldera up -> status -> agents -> operations -> report"),
+			metricLine("tutorial", "CTRL/TARGET sets URL/key/op/group; CTRL/FIRE executes C2 flows"),
+			wrap("Use p in CTRL/FIRE to switch mode. Co-op lane is telemetry-first and writes artifacts under artifacts/coop.", max(24, width)),
+		}
+		return strings.Join(lines, "\n")
+	}
 	if strings.EqualFold(mode, "onchain") {
 		lines := []string{
 			metricLine("mode", "ONCHAIN"),
@@ -10343,6 +11276,15 @@ func renderFireModeGuide(mode, exploitPipeline, deepEngine string, width int) st
 }
 
 func renderFireModeLegend(mode, exploitPipeline, deepEngine string, width int) string {
+	if strings.EqualFold(mode, "coop") {
+		lines := []string{
+			"▸ [COOP] Guided Quickstart",
+			"  [COOP] Launch + Status + API health",
+			"  [COOP] Agents + Operations + Report",
+			"  use g to toggle CO-OP/EXPLOIT fire mode",
+		}
+		return wrap(strings.Join(lines, " | "), width)
+	}
 	if strings.EqualFold(mode, "onchain") {
 		lines := []string{
 			"▸ [ONCHAIN] RPC Catalog + RPC Check",
@@ -10405,6 +11347,44 @@ func (m model) launchActions() []controlAction {
 	activeTarget := strings.TrimSpace(m.state.TargetURL)
 	mode := strings.ToLower(strings.TrimSpace(m.fireMode))
 	switch mode {
+	case "coop":
+		envPrefix := m.coopCalderaEnvPrefix()
+		return []controlAction{
+			{
+				Label:       "Start Kali Runtime",
+				Description: "Ensure Kali runtime is up for co-op/C2 tooling.",
+				Mode:        "local",
+				Command:     "docker compose up -d kali",
+				Args:        []string{"docker", "compose", "up", "-d", "kali"},
+			},
+			{
+				Label:       "[GUIDED] Co-op Quickstart",
+				Description: "Show compact guided flow for first-use co-op operators.",
+				Mode:        "internal",
+				Command:     "coop:tutorial:show",
+			},
+			{
+				Label:       "CO-OP Stack Check",
+				Description: "Verify CALDERA runtime wrappers in Kali.",
+				Mode:        "kali",
+				Command:     kaliExecCommand(envPrefix + " coop-caldera-check"),
+				KaliShell:   envPrefix + " coop-caldera-check",
+			},
+			{
+				Label:       "CO-OP Start CALDERA C2",
+				Description: "Start CALDERA server headlessly in Kali for co-op operations.",
+				Mode:        "kali",
+				Command:     kaliExecCommand(envPrefix + " coop-caldera-up"),
+				KaliShell:   envPrefix + " coop-caldera-up",
+			},
+			{
+				Label:       "CO-OP C2 Status",
+				Description: "Show CALDERA process/API status and quick telemetry.",
+				Mode:        "kali",
+				Command:     kaliExecCommand(envPrefix + " coop-caldera-status"),
+				KaliShell:   envPrefix + " coop-caldera-status",
+			},
+		}
 	case "osint":
 		return []controlAction{
 			{
@@ -10492,6 +11472,40 @@ func (m model) launchActions() []controlAction {
 }
 
 func (m model) targetActions() []controlAction {
+	if strings.EqualFold(m.fireMode, "coop") {
+		return []controlAction{
+			{
+				Label:       "CO-OP Caldera URL (Type)",
+				Description: "Set CALDERA API/UI base URL used by co-op C2 commands.",
+				Mode:        "internal",
+				Command:     "target:manual-coop-url",
+			},
+			{
+				Label:       "CO-OP Caldera API Key (Type)",
+				Description: "Set CALDERA API key (KEY header).",
+				Mode:        "internal",
+				Command:     "target:manual-coop-key",
+			},
+			{
+				Label:       "CO-OP Operation Name (Type)",
+				Description: "Set operation identifier for operation-oriented actions.",
+				Mode:        "internal",
+				Command:     "target:manual-coop-operation",
+			},
+			{
+				Label:       "CO-OP Agent Group (Type)",
+				Description: "Set host/agent group focus used in report context.",
+				Mode:        "internal",
+				Command:     "target:manual-coop-agent-group",
+			},
+			{
+				Label:       "CO-OP Profile: " + truncate(m.selectedCoopCalderaURL(), 44),
+				Description: "Active C2 endpoint and operation profile.",
+				Mode:        "internal",
+				Command:     "noop",
+			},
+		}
+	}
 	if strings.EqualFold(m.fireMode, "osint") {
 		return []controlAction{
 			{
@@ -10671,6 +11685,9 @@ func (m model) targetActions() []controlAction {
 }
 
 func (m model) fireActions() []controlAction {
+	if strings.EqualFold(m.fireMode, "coop") {
+		return m.coopFireActions()
+	}
 	if strings.EqualFold(m.fireMode, "onchain") {
 		return m.onchainFireActions()
 	}
@@ -10678,6 +11695,70 @@ func (m model) fireActions() []controlAction {
 		return m.osintFireActions()
 	}
 	return m.exploitFireActions()
+}
+
+func (m model) coopFireActions() []controlAction {
+	envPrefix := m.coopCalderaEnvPrefix()
+	op := m.selectedCoopOperationName()
+	group := m.selectedCoopAgentGroup()
+	actions := m.customFireActions("coop")
+	actions = append(actions,
+		controlAction{
+			Label:       "[COOP] Guided Quickstart",
+			Description: "Render co-op tutorial card in CTRL result area.",
+			Mode:        "internal",
+			Command:     "coop:tutorial:show",
+		},
+		controlAction{
+			Label:       "[COOP] Start CALDERA C2",
+			Description: "Start CALDERA service in Kali if not already running.",
+			Mode:        "kali",
+			Command:     kaliExecCommand(envPrefix + " coop-caldera-up"),
+			KaliShell:   envPrefix + " coop-caldera-up",
+		},
+		controlAction{
+			Label:       "[COOP] CALDERA Status",
+			Description: "Check C2 process, endpoint, and API response health.",
+			Mode:        "kali",
+			Command:     kaliExecCommand(envPrefix + " coop-caldera-status"),
+			KaliShell:   envPrefix + " coop-caldera-status",
+		},
+		controlAction{
+			Label:       "[COOP] List Agents",
+			Description: "Pull `/api/agents` via CALDERA API key.",
+			Mode:        "kali",
+			Command:     kaliExecCommand(envPrefix + " coop-caldera-api /api/agents GET"),
+			KaliShell:   envPrefix + " coop-caldera-api /api/agents GET",
+		},
+		controlAction{
+			Label:       "[COOP] List Operations",
+			Description: "Pull `/api/operations` and show active operation set.",
+			Mode:        "kali",
+			Command:     kaliExecCommand(envPrefix + " coop-caldera-api /api/operations GET"),
+			KaliShell:   envPrefix + " coop-caldera-api /api/operations GET",
+		},
+		controlAction{
+			Label:       "[COOP] Pull Operation Snapshot",
+			Description: "Persist agent+operation snapshot artifact for shared ops context.",
+			Mode:        "kali",
+			Command:     kaliExecCommand(envPrefix + " coop-caldera-op-report"),
+			KaliShell:   envPrefix + " coop-caldera-op-report",
+		},
+		controlAction{
+			Label:       "[COOP] Stop CALDERA C2",
+			Description: "Stop CALDERA process in Kali.",
+			Mode:        "kali",
+			Command:     kaliExecCommand(envPrefix + " coop-caldera-stop"),
+			KaliShell:   envPrefix + " coop-caldera-stop",
+		},
+		controlAction{
+			Label:       "[COOP] Profile",
+			Description: "operation=" + op + " group=" + group + " (profile snapshot)",
+			Mode:        "internal",
+			Command:     "noop",
+		},
+	)
+	return actions
 }
 
 func exploitFireGroups() []string {
@@ -10778,10 +11859,10 @@ func (m *model) preflightControlAction(action controlAction) (bool, string) {
 		}
 	}
 	if action.Mode == "kali" {
-		check := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", "jsbb-kali")
+		check := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", kaliContainerName())
 		out, err := check.CombinedOutput()
 		if err != nil || !strings.Contains(strings.ToLower(strings.TrimSpace(string(out))), "true") {
-			return false, "kali container jsbb-kali is not running"
+			return false, "kali container " + kaliContainerName() + " is not running"
 		}
 	}
 	return true, warning
@@ -10793,12 +11874,20 @@ func actionDone(action controlAction, commands []commandEntry) bool {
 		return false
 	}
 	for _, cmd := range commands {
-		meta := strings.ToLower(cmd.Command + " " + cmd.Tool + " " + cmd.OutputPreview)
-		if strings.Contains(meta, needle) && isSuccessStatus(cmd.Status, cmd.ExitCode) {
+		if commandMatchesAction(cmd, needle) && isSuccessStatus(cmd.Status, cmd.ExitCode) {
 			return true
 		}
 	}
 	return false
+}
+
+func commandMatchesAction(cmd commandEntry, actionNeedle string) bool {
+	needle := strings.ToLower(strings.TrimSpace(actionNeedle))
+	if needle == "" {
+		return false
+	}
+	meta := strings.ToLower(cmd.Command + " " + cmd.Tool + " " + cmd.OutputPreview + " " + cmd.Phase)
+	return strings.Contains(meta, needle)
 }
 
 func (m model) customFireActions(mode string) []controlAction {
@@ -11650,6 +12739,26 @@ func (m *model) applyInternalAction(action controlAction) {
 			m.manualTargetInput = "0x0000000000000000000000000000000000000000"
 		}
 		m.controlStatus = "manual ONCHAIN input active :: type target and press Enter (Esc cancels)"
+	case "target:manual-coop-url":
+		m.manualTargetMode = true
+		m.manualTargetKind = "coop-url"
+		m.manualTargetInput = m.selectedCoopCalderaURL()
+		m.controlStatus = "manual CO-OP caldera URL active :: type URL and press Enter (Esc cancels)"
+	case "target:manual-coop-key":
+		m.manualTargetMode = true
+		m.manualTargetKind = "coop-key"
+		m.manualTargetInput = m.selectedCoopCalderaAPIKey()
+		m.controlStatus = "manual CO-OP API key active :: type key and press Enter (Esc cancels)"
+	case "target:manual-coop-operation":
+		m.manualTargetMode = true
+		m.manualTargetKind = "coop-operation"
+		m.manualTargetInput = m.selectedCoopOperationName()
+		m.controlStatus = "manual CO-OP operation active :: type operation name and press Enter (Esc cancels)"
+	case "target:manual-coop-agent-group":
+		m.manualTargetMode = true
+		m.manualTargetKind = "coop-agent-group"
+		m.manualTargetInput = m.selectedCoopAgentGroup()
+		m.controlStatus = "manual CO-OP agent group active :: type group and press Enter (Esc cancels)"
 	case "target:inner:next":
 		targets := exploitInnerTargets(findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
 		if len(targets) == 0 {
@@ -11932,6 +13041,34 @@ func (m *model) applyInternalAction(action controlAction) {
 		m.telemetryDir = path
 		m.reload()
 		m.controlStatus = "ok :: loaded latest run " + filepath.Base(path)
+	case "coop:tutorial:show":
+		m.controlStatus = "ok :: co-op guided quickstart loaded"
+		m.controlOutput = strings.Join([]string{
+			"CO-OP (CALDERA C2) QUICKSTART",
+			"",
+			"1) CTRL -> TARGET",
+			"   - set CALDERA URL (default http://127.0.0.1:8888)",
+			"   - set API key (default ADMIN123 in --insecure mode)",
+			"   - set operation name and agent group",
+			"",
+			"2) CTRL -> FIRE",
+			"   - Start CALDERA C2",
+			"   - CALDERA Status",
+			"   - List Agents",
+			"   - List Operations",
+			"   - Pull Operation Snapshot",
+			"",
+			"3) Evidence",
+			"   - artifacts/coop/* captures co-op snapshots",
+			"   - telemetry/commands.jsonl and telemetry/loot.jsonl track the run",
+			"",
+			"tips",
+			"- use g to toggle CO-OP mode from CTRL",
+			"- keep API key in env: COOP_CALDERA_API_KEY for safer reuse",
+		}, "\n")
+		m.controlLastLabel = action.Label
+		m.controlLastCommand = action.Command
+		m.controlDetailScroll = 0
 	case "fire-mode:osint":
 		m.fireMode = "osint"
 		m.exploitPipelineMenu = false
@@ -11950,10 +13087,18 @@ func (m *model) applyInternalAction(action controlAction) {
 		m.ensureCommandSelection()
 		m.ensureFindingSelection()
 		m.controlStatus = "ok :: FIRE mode switched to EXPLOIT"
+	case "fire-mode:coop":
+		m.fireMode = "coop"
+		m.exploitPipelineMenu = false
+		m.ensureCommandSelection()
+		m.ensureFindingSelection()
+		m.controlStatus = "ok :: FIRE mode switched to CO-OP"
 	default:
 		m.controlStatus = "noop"
 	}
-	m.controlOutput = ""
+	if !strings.EqualFold(strings.TrimSpace(action.Command), "coop:tutorial:show") {
+		m.controlOutput = ""
+	}
 	m.controlLastLabel = action.Label
 	m.controlLastCommand = action.Command
 	m.controlDetailScroll = 0
@@ -12015,6 +13160,16 @@ func (m model) customCommandTemplates(mode string) []string {
 			"onchain-address-flow " + shellQuote(target) + " " + shellQuote(network) + " 50000",
 			"onchain-slither " + shellQuote(target),
 			"find /artifacts/onchain -maxdepth 3 -type f 2>/dev/null | sort",
+		}
+	case "coop":
+		envPrefix := m.coopCalderaEnvPrefix()
+		return []string{
+			envPrefix + " coop-caldera-up",
+			envPrefix + " coop-caldera-status",
+			envPrefix + " coop-caldera-api /api/agents GET",
+			envPrefix + " coop-caldera-api /api/operations GET",
+			envPrefix + " coop-caldera-op-report",
+			"find /artifacts/coop -maxdepth 3 -type f 2>/dev/null | sort",
 		}
 	default:
 		if baseURL == "" {
@@ -12105,6 +13260,73 @@ func (m *model) submitManualOnchainTarget() tea.Cmd {
 	m.controlOutput = ""
 	m.controlLastLabel = "Set ONCHAIN Input: " + strings.ToUpper(m.selectedOnchainInputType())
 	m.controlLastCommand = target
+	m.controlDetailScroll = 0
+	return nil
+}
+
+func (m *model) submitManualCoopCalderaURL() tea.Cmd {
+	value := strings.TrimSpace(m.manualTargetInput)
+	if value == "" {
+		m.controlStatus = "manual CO-OP caldera URL is empty"
+		return nil
+	}
+	if !strings.Contains(value, "://") {
+		value = "http://" + value
+	}
+	m.coopCalderaURL = value
+	m.manualTargetMode = false
+	m.controlStatus = "ok :: CO-OP caldera URL -> " + truncate(value, 64)
+	m.controlOutput = ""
+	m.controlLastLabel = "Set CO-OP Caldera URL"
+	m.controlLastCommand = value
+	m.controlDetailScroll = 0
+	return nil
+}
+
+func (m *model) submitManualCoopCalderaAPIKey() tea.Cmd {
+	value := strings.TrimSpace(m.manualTargetInput)
+	if value == "" {
+		m.controlStatus = "manual CO-OP caldera API key is empty"
+		return nil
+	}
+	m.coopCalderaAPIKey = value
+	m.manualTargetMode = false
+	m.controlStatus = "ok :: CO-OP caldera API key updated"
+	m.controlOutput = ""
+	m.controlLastLabel = "Set CO-OP Caldera API Key"
+	m.controlLastCommand = truncate(value, 24)
+	m.controlDetailScroll = 0
+	return nil
+}
+
+func (m *model) submitManualCoopOperationName() tea.Cmd {
+	value := strings.TrimSpace(m.manualTargetInput)
+	if value == "" {
+		m.controlStatus = "manual CO-OP operation name is empty"
+		return nil
+	}
+	m.coopOperationName = value
+	m.manualTargetMode = false
+	m.controlStatus = "ok :: CO-OP operation -> " + truncate(value, 64)
+	m.controlOutput = ""
+	m.controlLastLabel = "Set CO-OP Operation Name"
+	m.controlLastCommand = value
+	m.controlDetailScroll = 0
+	return nil
+}
+
+func (m *model) submitManualCoopAgentGroup() tea.Cmd {
+	value := strings.TrimSpace(m.manualTargetInput)
+	if value == "" {
+		m.controlStatus = "manual CO-OP agent group is empty"
+		return nil
+	}
+	m.coopAgentGroup = value
+	m.manualTargetMode = false
+	m.controlStatus = "ok :: CO-OP agent group -> " + truncate(value, 64)
+	m.controlOutput = ""
+	m.controlLastLabel = "Set CO-OP Agent Group"
+	m.controlLastCommand = value
 	m.controlDetailScroll = 0
 	return nil
 }
@@ -12243,7 +13465,7 @@ func (m *model) submitManualModuleInput() tea.Cmd {
 
 func replayCmd(command string) tea.Cmd {
 	return func() tea.Msg {
-		cmd := exec.Command("docker", "exec", "jsbb-kali", "bash", "-lc", command)
+		cmd := exec.Command("docker", "exec", kaliContainerName(), "bash", "-lc", command)
 		out, err := cmd.CombinedOutput()
 		return replayResultMsg{
 			Command: command,
@@ -12438,8 +13660,8 @@ func lootCmd(root string, action controlAction) tea.Cmd {
 		switch action.Mode {
 		case "kali":
 			shell := strings.TrimSpace(action.KaliShell)
-			cmd = exec.Command("docker", "exec", "jsbb-kali", "bash", "-lc", shell)
-			commandText = "docker exec jsbb-kali bash -lc " + shellQuote(shell)
+			cmd = exec.Command("docker", "exec", kaliContainerName(), "bash", "-lc", shell)
+			commandText = kaliExecCommand(shell)
 		default:
 			if len(action.Args) == 0 {
 				return lootResultMsg{
@@ -12505,8 +13727,8 @@ func pwnedCmd(root string, action controlAction) tea.Cmd {
 		switch action.Mode {
 		case "kali":
 			shell := strings.TrimSpace(action.KaliShell)
-			cmd = exec.Command("docker", "exec", "jsbb-kali", "bash", "-lc", shell)
-			commandText = "docker exec jsbb-kali bash -lc " + shellQuote(shell)
+			cmd = exec.Command("docker", "exec", kaliContainerName(), "bash", "-lc", shell)
+			commandText = kaliExecCommand(shell)
 		default:
 			if len(action.Args) == 0 {
 				return pwnedResultMsg{
@@ -12561,8 +13783,8 @@ func taxonomyCmd(root string, action controlAction) tea.Cmd {
 		switch action.Mode {
 		case "kali":
 			shell := strings.TrimSpace(action.KaliShell)
-			cmd = exec.Command("docker", "exec", "jsbb-kali", "bash", "-lc", shell)
-			commandText = "docker exec jsbb-kali bash -lc " + shellQuote(shell)
+			cmd = exec.Command("docker", "exec", kaliContainerName(), "bash", "-lc", shell)
+			commandText = kaliExecCommand(shell)
 		default:
 			if len(action.Args) == 0 {
 				return taxonomyResultMsg{
@@ -12595,8 +13817,8 @@ func controlCmd(root string, action controlAction, phase string) tea.Cmd {
 		switch action.Mode {
 		case "kali":
 			shell := strings.TrimSpace(action.KaliShell)
-			cmd = exec.Command("docker", "exec", "jsbb-kali", "bash", "-lc", shell)
-			commandText = "docker exec jsbb-kali bash -lc " + shellQuote(shell)
+			cmd = exec.Command("docker", "exec", kaliContainerName(), "bash", "-lc", shell)
+			commandText = kaliExecCommand(shell)
 		default:
 			cmd = exec.Command(action.Args[0], action.Args[1:]...)
 			cmd.Dir = root
@@ -12617,6 +13839,13 @@ func controlCmd(root string, action controlAction, phase string) tea.Cmd {
 				finalOutput += "\n\n[onchain-loot] persist failed :: " + persistErr.Error()
 			} else if strings.TrimSpace(rel) != "" {
 				finalOutput += "\n\n[onchain-loot] captured :: " + rel
+			}
+		}
+		if isCoopAction(action) {
+			if rel, persistErr := persistCoopResult(root, action, finalOutput); persistErr != nil {
+				finalOutput += "\n\n[coop-loot] persist failed :: " + persistErr.Error()
+			} else if strings.TrimSpace(rel) != "" {
+				finalOutput += "\n\n[coop-loot] captured :: " + rel
 			}
 		}
 		if strings.TrimSpace(action.ModuleID) != "" {
@@ -12646,8 +13875,8 @@ func archGraphCmd(root string, node attackGraphNode, action controlAction, role,
 			if shell == "" {
 				shell = commandText
 			}
-			cmd = exec.Command("docker", "exec", "jsbb-kali", "bash", "-lc", shell)
-			commandText = "docker exec jsbb-kali bash -lc " + shellQuote(shell)
+			cmd = exec.Command("docker", "exec", kaliContainerName(), "bash", "-lc", shell)
+			commandText = kaliExecCommand(shell)
 		default:
 			run := commandText
 			if run == "" {
@@ -12675,7 +13904,7 @@ func archGraphCmd(root string, node attackGraphNode, action controlAction, role,
 
 func isOSINTAction(action controlAction) bool {
 	meta := strings.ToLower(action.Label + " " + action.Command + " " + action.KaliShell)
-	if strings.Contains(meta, "[onchain]") || strings.Contains(meta, "onchain-") {
+	if strings.Contains(meta, "[onchain]") || strings.Contains(meta, "onchain-") || strings.Contains(meta, "[coop]") || strings.Contains(meta, "coop-caldera") || strings.Contains(meta, "caldera") {
 		return false
 	}
 	markers := []string{"[osint]", "osint-", "theharvester", "bbot", "spiderfoot", "recon-ng", "reconng", "rengine", "maltego"}
@@ -12689,7 +13918,21 @@ func isOSINTAction(action controlAction) bool {
 
 func isOnchainAction(action controlAction) bool {
 	meta := strings.ToLower(action.Label + " " + action.Command + " " + action.KaliShell)
+	if strings.Contains(meta, "[coop]") || strings.Contains(meta, "coop-caldera") || strings.Contains(meta, "caldera") {
+		return false
+	}
 	markers := []string{"[onchain]", "onchain-", "slither", "mythril", "forge", "anvil", "cast", "echidna", "medusa", "halmos"}
+	for _, marker := range markers {
+		if strings.Contains(meta, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCoopAction(action controlAction) bool {
+	meta := strings.ToLower(action.Label + " " + action.Command + " " + action.KaliShell)
+	markers := []string{"[coop]", "coop-caldera", "caldera", "/api/agents", "/api/operations", "sandcat", "stockpile"}
 	for _, marker := range markers {
 		if strings.Contains(meta, marker) {
 			return true
@@ -12822,6 +14065,72 @@ func persistOnchainResult(root string, action controlAction, output string) (str
 		return "", err
 	}
 	relPath := filepath.ToSlash(filepath.Join("artifacts", "onchain", "loot", fileName))
+	preview := firstNonEmptyLine(text)
+	if preview == "" {
+		preview = truncate(text, 180)
+	}
+	entry := lootEntry{
+		Timestamp: now.Format(time.RFC3339),
+		Kind:      "artifact",
+		Name:      strings.ToUpper(tool) + " result",
+		Source:    relPath,
+		Preview:   truncate(preview, 240),
+	}
+	lootPath := filepath.Join(root, "telemetry", "loot.jsonl")
+	if err := appendLootJSONL(lootPath, entry); err != nil {
+		return "", err
+	}
+	return relPath, nil
+}
+
+func coopToolFromAction(action controlAction) string {
+	meta := strings.ToLower(action.Label + " " + action.Command + " " + action.KaliShell)
+	switch {
+	case strings.Contains(meta, "up"), strings.Contains(meta, "start"):
+		return "caldera-start"
+	case strings.Contains(meta, "status"):
+		return "caldera-status"
+	case strings.Contains(meta, "api"), strings.Contains(meta, "/api/v2/"):
+		return "caldera-api"
+	case strings.Contains(meta, "op-report"), strings.Contains(meta, "snapshot"):
+		return "caldera-report"
+	case strings.Contains(meta, "stop"):
+		return "caldera-stop"
+	default:
+		return "caldera"
+	}
+}
+
+func persistCoopResult(root string, action controlAction, output string) (string, error) {
+	text := strings.TrimSpace(output)
+	if text == "" {
+		return "", nil
+	}
+	now := time.Now().UTC()
+	stamp := now.Format("20060102-150405")
+	tool := coopToolFromAction(action)
+	slug := sanitizeToken(tool)
+	if slug == "" {
+		slug = "coop"
+	}
+	dir := filepath.Join(root, "artifacts", "coop")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	fileName := stamp + "-" + slug + ".txt"
+	fullPath := filepath.Join(dir, fileName)
+	payload := strings.Join([]string{
+		"# coop action",
+		"label: " + action.Label,
+		"command: " + strings.TrimSpace(action.Command),
+		"time: " + now.Format(time.RFC3339),
+		"",
+		text,
+	}, "\n")
+	if err := os.WriteFile(fullPath, []byte(payload), 0o644); err != nil {
+		return "", err
+	}
+	relPath := filepath.ToSlash(filepath.Join("artifacts", "coop", fileName))
 	preview := firstNonEmptyLine(text)
 	if preview == "" {
 		preview = truncate(text, 180)

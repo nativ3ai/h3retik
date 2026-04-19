@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+url="${COOP_CALDERA_URL:-http://127.0.0.1:8888}"
+pid_file="${COOP_CALDERA_PID_FILE:-/tmp/h3retik-caldera.pid}"
+log_file="${COOP_CALDERA_LOG_FILE:-/artifacts/coop/caldera-server.log}"
+
+mkdir -p "$(dirname "$log_file")"
+
+if [[ -f "$pid_file" ]]; then
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    echo "[coop] caldera already running pid=$pid"
+    echo "[coop] endpoint=$url"
+    exit 0
+  fi
+fi
+
+if curl -sS -k -o /dev/null -w "%{http_code}" "$url" 2>/dev/null | grep -Eq '^(2|3|4)'; then
+  echo "[coop] caldera endpoint already reachable at $url"
+  exit 0
+fi
+
+nohup caldera --insecure >"$log_file" 2>&1 &
+pid="$!"
+echo "$pid" >"$pid_file"
+echo "[coop] starting caldera pid=$pid"
+echo "[coop] log=$log_file"
+
+for _ in $(seq 1 45); do
+  if curl -sS -k -o /dev/null -w "%{http_code}" "$url" 2>/dev/null | grep -Eq '^(2|3|4)'; then
+    echo "[coop] caldera ready url=$url"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "[coop] caldera startup timeout url=$url" >&2
+exit 1

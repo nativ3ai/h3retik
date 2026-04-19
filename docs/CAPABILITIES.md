@@ -1,12 +1,12 @@
-# h3retik Capability Matrix (v0.0.1)
+# h3retik Capability Matrix (v0.0.3)
 
 This matrix documents the mounted suite and how each class is exposed in h3retik.
 
 ## Runtime Topology
 
-- Kali container: `jsbb-kali`
+- Kali container: `${H3RETIK_KALI_CONTAINER:-jsbb-kali}`
 - Compose service: `kali`
-- Image tag: `h3retik/kali:v0.0.1`
+- Image tag: `${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.3}`
 - Persistent mounts:
   - `/telemetry` (host `telemetry/`)
   - `/artifacts` (host `artifacts/`)
@@ -46,6 +46,17 @@ This matrix documents the mounted suite and how each class is exposed in h3retik
 | `onchain-medusa` | fuzzing workflow checks |
 | `onchain-halmos` | symbolic pipeline execution |
 | `onchain-stack-check` | runtime verification for onchain suite |
+
+## Co-op / C2 Suite (CALDERA)
+
+| Wrapper | Purpose |
+|---|---|
+| `coop-caldera-check` | validate CALDERA binaries/config/runtime wiring |
+| `coop-caldera-up` | launch CALDERA headlessly in Kali |
+| `coop-caldera-status` | summarize process/API status + quick health telemetry |
+| `coop-caldera-api` | generic authenticated API call helper (`KEY` header) |
+| `coop-caldera-op-report` | build operation+agent snapshot artifact |
+| `coop-caldera-stop` | stop CALDERA process cleanly |
 
 ## Control and Telemetry Contract
 

@@ -1,4 +1,4 @@
-# Literate Programming Guide — h3retik v0.0.1
+# Literate Programming Guide — h3retik v0.0.3
 
 This document is written as an executable narrative: every capability maps to concrete files and commands.
 
@@ -20,18 +20,21 @@ The control plane supports mode-scoped workflows:
 - exploit
 - osint
 - onchain
+- coop (CALDERA C2)
 
 ### 2.2 Execution Plane
 
 Headless command execution happens through:
 
 - local runtime (`python3`/native commands)
-- Kali runtime (`docker exec jsbb-kali bash -lc ...`)
+- Kali runtime (`docker exec $H3RETIK_KALI_CONTAINER bash -lc ...`)
 
 Kali is provisioned by:
 
 - `Dockerfile.kali`
 - `docker-compose.yml`
+
+If `jsbb-kali` already exists on the machine, `h3retik` can attach to it instead of bringing up a fresh compose container, provided `H3RETIK_SKIP_UP=1` is set or the default container already matches the expected name.
 
 ### 2.3 Evidence Plane
 
@@ -60,6 +63,7 @@ This is the canonical source for OPS/PWNED/LOOT/MAP rendering.
 
 - `kali-headless/osint-*`
 - `kali-headless/onchain-*`
+- `kali-headless/coop-*`
 
 ## 4. Operational Loop
 
@@ -70,12 +74,12 @@ This is the canonical source for OPS/PWNED/LOOT/MAP rendering.
 5. Explore relationships and access paths in MAP
 6. Iterate with OPSEC-aware next actions
 
-## 5. Release v0.0.1 Contract
+## 5. Release v0.0.3 Contract
 
-v0.0.1 guarantees:
+v0.0.3 guarantees:
 
 - single global command (`h3retik`)
-- preconfigured Kali image tag (`h3retik/kali:v0.0.1`)
+- preconfigured Kali image tag (`h3retik/kali:v0.0.3`)
 - agent skill profile (`SKILL.md`)
 - documented capabilities (`docs/CAPABILITIES.md`)
 
@@ -89,7 +93,7 @@ h3retik doctor
 h3retik
 ```
 
-## 7. Next SOTA Milestones (post v0.0.1)
+## 7. Next SOTA Milestones (post v0.0.3)
 
 - multi-operator shared ops space (presence, role separation, conflict controls)
 - blue-team co-observation panel with remediation proposals

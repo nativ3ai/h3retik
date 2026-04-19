@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+base="${COOP_CALDERA_URL:-http://127.0.0.1:8888}"
+key="${COOP_CALDERA_API_KEY:-ADMIN123}"
+out_dir="/artifacts/coop"
+mkdir -p "$out_dir"
+
+stamp="$(date -u +"%Y%m%d-%H%M%S")"
+out_json="$out_dir/caldera-op-report-${stamp}.json"
+out_txt="$out_dir/caldera-op-report-${stamp}.txt"
+
+agents_file="$(mktemp)"
+ops_file="$(mktemp)"
+
+agents_http="$(curl -sS -k -o "$agents_file" -w "%{http_code}" -H "KEY: $key" "$base/api/agents" || true)"
+ops_http="$(curl -sS -k -o "$ops_file" -w "%{http_code}" -H "KEY: $key" "$base/api/operations" || true)"
+
+if [[ ! "$agents_http" =~ ^2 ]] || [[ ! "$ops_http" =~ ^2 ]]; then
+  echo "[coop] failed to collect caldera report agents_http=$agents_http operations_http=$ops_http" >&2
+  rm -f "$agents_file" "$ops_file"
+  exit 1
+fi
+
+if command -v jq >/dev/null 2>&1; then
+  jq -n \
+    --arg generated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    --arg url "$base" \
+    --argjson agents "$(cat "$agents_file")" \
+    --argjson operations "$(cat "$ops_file")" \
+    '{
+      generated_at: $generated_at,
+      caldera_url: $url,
+      agents_count: ($agents|length),
+      operations_count: ($operations|length),
+      agents: $agents,
+      operations: $operations
+    }' >"$out_json"
+  {
+    echo "[coop] caldera operation report"
+    echo "[coop] generated_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "[coop] url=$base"
+    echo "[coop] agents_count=$(jq -r '.|length' "$agents_file")"
+    echo "[coop] operations_count=$(jq -r '.|length' "$ops_file")"
+    echo ""
+    echo "[coop] latest_agents"
+    jq -r '.[] | "- \(.paw // "n/a") :: \(.host // "n/a") :: \(.platform // "n/a") :: \(.privilege // "n/a")"' "$agents_file" 2>/dev/null | head -n 12 || true
+    echo ""
+    echo "[coop] latest_operations"
+    jq -r '.[] | "- \(.name // "n/a") :: \(.state // "n/a") :: agents=\((.host_group // [])|length)"' "$ops_file" 2>/dev/null | head -n 12 || true
+    echo ""
+    echo "[coop] artifact_json=$out_json"
+  } | tee "$out_txt"
+else
+  cat "$agents_file" >"$out_json"
+  {
+    echo "[coop] caldera operation report"
+    echo "[coop] generated_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "[coop] url=$base"
+    echo "[coop] agents_http=$agents_http"
+    echo "[coop] operations_http=$ops_http"
+    echo "[coop] artifact_json=$out_json"
+  } | tee "$out_txt"
+fi
+
+rm -f "$agents_file" "$ops_file"

@@ -1,10 +1,10 @@
 services:
   kali:
-    image: h3retik/kali:v0.0.1
+    image: ${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.3}
     build:
       context: .
       dockerfile: Dockerfile.kali
-    container_name: jsbb-kali
+    container_name: ${H3RETIK_KALI_CONTAINER:-jsbb-kali}
     privileged: true
     cap_add:
       - NET_ADMIN
@@ -19,6 +19,7 @@ services:
 
 networks:
   blackbox-lab:
+    external: true
     name: blackbox-lab
   juiceshop-blackbox:
     external: true

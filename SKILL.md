@@ -10,7 +10,7 @@ This document is meant to be pasted into an LLM/system prompt. It teaches an age
 
 ## Mission
 
-Run exploit, OSINT, and onchain workflows from one control plane:
+Run exploit, OSINT, onchain, and co-op/C2 workflows from one control plane:
 
 - Interactive: `h3retik` (TUI).
 - Headless orchestration: `h3retik pipeline ...`.
@@ -34,8 +34,8 @@ If you cannot locate files, ask the operator for the repo path or a copy/paste o
 
 - Root launcher: `h3retik`
 - Compose service: `kali`
-- Kali image tag: `h3retik/kali:v0.0.1`
-- Kali container name (default): `jsbb-kali`
+- Kali image tag: `h3retik/kali:v0.0.3`
+- Kali container name (default): `jsbb-kali` (`H3RETIK_KALI_CONTAINER` override)
 - Telemetry bus: `telemetry/` (append-only JSONL streams)
 - Artifacts store: `artifacts/` (files referenced by loot/evidence)
 
@@ -49,6 +49,17 @@ Repo docs (relative to repo root):
 2. Start runtime: `h3retik up`
 3. Set target scope: `h3retik target set --kind custom --url http://127.0.0.1:8080`
 4. Launch operator loop: `h3retik` (or `h3retik tui`)
+
+Co-op/C2 fast path in TUI:
+- `CTRL` -> press `g` (co-op scope)
+- `TARGET`: set CALDERA URL/key/op/group
+- `FIRE`: run start/status/agents/operations/report
+- follow inline `hint :: ...` guidance for next best co-op step
+
+Existing compatible Kali container:
+
+- `H3RETIK_KALI_CONTAINER=<name> H3RETIK_SKIP_UP=1 h3retik tui`
+- If `jsbb-kali` already exists and is running, plain `h3retik` will attach to it automatically.
 
 Headless (non-interactive) alternative:
 
@@ -79,6 +90,7 @@ If you are asked “how do I drive it like a pro?”, the answer is: set scope �
 - Kali headless wrappers:
   - OSINT: `kali-headless/osint-*`
   - Onchain: `kali-headless/onchain-*`
+  - Co-op/C2: `kali-headless/coop-*`
 - Orchestrators:
   - `scripts/security_pipeline.py` (named pipelines, module orchestration, telemetry writes)
   - `scripts/observatory_runner.py` (lab harness / observatory mode)

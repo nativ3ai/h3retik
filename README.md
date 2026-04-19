@@ -1,4 +1,4 @@
-# h3retik v0.0.1
+# h3retik v0.0.3
 
 SOTA red teaming operations cockpit: headless Kali execution, gamified operator UX, and evidence-first telemetry.
 
@@ -32,14 +32,14 @@ SOTA red teaming operations cockpit: headless Kali execution, gamified operator 
 
 ## What It Does
 - Gamifies redteaming hacking opex through an intuitive TUI
-- Runs exploit, OSINT, and onchain workflows from one keyboard-first control plane.
+- Runs exploit, OSINT, onchain, and co-op/C2 workflows from one keyboard-first control plane.
 - Executes operator actions as reproducible headless CLI commands (`kali` or `local`).
 - Captures structured evidence in telemetry streams (`commands`, `findings`, `loot`, `exploits`).
 - Maps operations into fast views (`OPS`, `PWNED`, `LOOT`, `MAP`) with OPSEC signal and next actions.
 
 ## Why H3retik
 
-- Operator-first design with mode-scoped workflow (`exploit`, `osint`, `onchain`).
+- Operator-first design with mode-scoped workflow (`exploit`, `osint`, `onchain`, `coop`).
 - Target-agnostic execution from target URL + discovered evidence.
 - Unified runtime: packaged Kali + wrappers + modular pipelines.
 - Gamified but professional UX for real operations tempo.
@@ -52,7 +52,7 @@ Verification source: public upstream repository docs/readmes (snapshot checked o
 |---|---:|---:|---:|---:|---:|
 | Exploit module ecosystem (built-in) | Partial | Yes | Partial | No | Partial |
 | Adversary emulation / kill-chain orchestration | Yes | Partial | Yes | No | Partial |
-| C2 / agent management in-core | Partial | Partial | Yes | No | No |
+| C2 / agent management in-core | Partial | Partial | Yes | No | Partial |
 | Credential attack workflows (online/offline) | Partial | Yes | Partial | No | Yes |
 | Operator-in-the-loop UX (fast steering) | Partial | Partial | Partial | Yes | **Yes** |
 | Evidence capture for later reporting/audit | Partial | Partial | Partial | Yes | **Yes** |
@@ -66,15 +66,20 @@ Notes:
 - `Partial` = achievable via plugins/manual composition/integration, but not the default operator loop.
 - This table compares “what a working operator gets out of the box”, not what can be built with enough glue.
 
-### What You Configure (Primitives)
+## Installation Requirements (Fresh Machine)
 
-| Repo / Tool | Primary configuration primitive (what operators actually edit / drive) |
-|---|---|
-| `PurpleAILAB/Decepticon` | Engagement plan + agent configuration (kill-chain automation driven from a run plan) |
-| `rapid7/metasploit-framework` | Modules, payload options, resource scripts (`.rc`), sessions/workspaces |
-| `mitre/caldera` | Abilities/TTPs + operations/tasking + plugins (server + agent C2 configuration) |
-| `infobyte/faraday` | Projects + imports/normalization + reporting/dashboard configuration |
-| **`nativ3ai/h3retik`** | Target scope + operator pipelines + evidence/telemetry streams (`telemetry/*.jsonl`, `telemetry/state.json`) |
+| Requirement | Needed for | Required |
+|---|---|---|
+| `docker` + `docker compose` plugin | Kali runtime, wrappers, co-op stack | Yes |
+| `git` | bootstrap/source install | Yes |
+| `bash` | launcher + installer scripts | Yes |
+| `python3` | `target`/`pipeline`/`observatory` helpers | Yes |
+| `go` | local build of `juicetui` (`h3retik build`) | Recommended |
+
+Runtime footprint:
+- Current Kali image size on disk: ~`17–18GB` (`h3retik/kali:v0.0.3`).
+- Recommended free disk for first install/build + artifacts: `30GB+` (better: `40GB`).
+- Recommended memory: `8GB+` (`16GB` preferred for heavy scan/fuzz workloads).
 
 ## One-Liner Install
 
@@ -89,6 +94,14 @@ bash -lc 'SRC="${H3RETIK_SRC_DIR:-$HOME/.local/src/h3retik}"; rm -rf "$SRC"; git
 ```bash
 bash -lc 'curl -fsSL https://raw.githubusercontent.com/nativ3ai/h3retik/main/scripts/bootstrap_h3retik.sh | bash'
 ```
+
+What the all-in-one installer does:
+- Pulls `nativ3ai/h3retik` source to `~/.local/src/h3retik` (or updates it).
+- Copies runtime payload to `~/.local/share/h3retik/<version>`.
+- Installs global launcher at `~/.local/bin/h3retik`.
+- Creates writable runtime dirs: `telemetry/`, `artifacts/`, `bin/`.
+- Builds `bin/juicetui` if `go` is installed (otherwise build happens later when available).
+- Does not auto-start containers; runtime comes up with `h3retik up` or first `h3retik`.
 
 After install:
 
@@ -114,43 +127,126 @@ ln -sf "$(pwd)/SKILL.md" ~/.codex/skills/h3retik/SKILL.md
 h3retik                          # start kali + launch TUI
 h3retik up                       # start/build kali service
 h3retik down                     # stop stack
+h3retik build-kali               # build kali image
 h3retik target ...               # scripts/targetctl.py passthrough
 h3retik pipeline ...             # scripts/security_pipeline.py passthrough
 h3retik observatory ...          # scripts/observatory_runner.py passthrough
 h3retik kali "<cmd>"             # execute command in kali container
+h3retik coop <cmd>               # caldera co-op helpers (check/up/status/stop/api/report)
 h3retik doctor                   # runtime checks
 ```
 
-## Mounted Runtime + Suite
+## Existing Kali / External Runtime
 
-- Kali image: `h3retik/kali:v0.0.1`
-- Compose service: `kali` (`jsbb-kali`)
+h3retik can run only the TUI against an already-running container. If `jsbb-kali` already exists, `h3retik` will reuse it automatically; otherwise set the container name explicitly.
+
+```bash
+export H3RETIK_KALI_CONTAINER=<your-kali-container>
+export H3RETIK_SKIP_UP=1
+h3retik tui
+```
+
+For the default container name, no extra flag is needed if `jsbb-kali` is already running:
+
+```bash
+h3retik
+```
+
+Optional image override for compose-managed mode:
+
+```bash
+export H3RETIK_KALI_IMAGE=<custom-image-tag>
+h3retik up
+```
+
+Important:
+- Some actions fail if your external Kali image does not include required wrappers/packages.
+- Required wrappers are documented in `docs/CAPABILITIES.md` (`osint-*`, `onchain-*`, `coop-*`).
+
+Minimum compatibility checklist for external Kali images:
+- Base runtime: `bash`, `python3`, `curl`, `jq`, `git`.
+- Exploit lane core: `nmap`, `ffuf`, `nikto`, `sqlmap`, `hydra`, `medusa`, `nuclei`, `metasploit-framework`.
+- OSINT lane core: `theharvester`, `bbot`, `spiderfoot`, `recon-ng`, `rengine` (or equivalent callable wrapper).
+- Onchain lane core: `slither`, `myth` (mythril), `forge`, `cast`, `echidna`, `medusa`, `halmos`.
+- Co-op lane core: `caldera` + wrappers (`coop-caldera-*`).
+
+If you want full feature parity, use `h3retik up` with the default bundled Kali image.
+
+## Runtime + Suite
+
+- Kali image: `h3retik/kali:v0.0.3`
+- Compose service: `kali` (`${H3RETIK_KALI_CONTAINER:-jsbb-kali}`)
 - Mounted volumes:
   - `./telemetry -> /telemetry`
   - `./artifacts -> /artifacts`
 - Wrapper packs:
   - `kali-headless/osint-*`
   - `kali-headless/onchain-*`
+  - `kali-headless/coop-*`
 
 Capability matrix: [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
+
+## Co-op UX Flow (CALDERA in TUI)
+
+- Open `CTRL`, press `g` to switch scope to `CO-OP`.
+- Use `[]` to choose section (`LAUNCH`, `TARGET`, `FIRE`, `HISTORY`).
+- Use `↑/↓` for category selection and `,/.` for options in the selected category.
+- In `TARGET`, set CALDERA URL/API key/operation/group.
+- In `FIRE`, run the loop: start C2 -> status -> agents -> operations -> report.
+- A non-invasive context hint appears in `CTRL` while in `CO-OP` mode to guide next step.
+
+## Repository Includes
+
+- [`cmd/juicetui/`](cmd/juicetui) — TUI source (CTRL/ARCH/OPS/PWNED/LOOT/MAP).
+- [`kali-headless/`](kali-headless) — headless wrappers for exploit/OSINT/onchain/co-op.
+- [`modules/exploit/`](modules/exploit) — dynamic exploit module manifests.
+- [`scripts/`](scripts) — install/bootstrap + target/pipeline orchestration.
+- [`docs/`](docs) — literate architecture, scoring, capability matrix, tutorials.
+- [`telemetry/`](telemetry) — JSON/JSONL operation streams consumed by the TUI.
+- [`artifacts/`](artifacts) — persisted command outputs/evidence bundles.
+
+## Telemetry Contract
+
+h3retik uses JSONL telemetry as source-of-truth for all panes:
+
+- `telemetry/state.json`
+- `telemetry/commands.jsonl`
+- `telemetry/findings.jsonl`
+- `telemetry/loot.jsonl`
+- `telemetry/exploits.jsonl`
+
+Telemetry usage by pane:
+- `OPS` reads command/event timeline from `commands.jsonl`.
+- `PWNED` reads normalized vulnerabilities/impact from `findings.jsonl` + `exploits.jsonl`.
+- `LOOT` reads validated artifacts/entities from `loot.jsonl`.
+- `ARCH`/`MAP` reads current target and campaign state from `state.json` + correlated findings.
+
+This keeps TUI state and headless execution synchronized, replayable, and exportable.
 
 ## Documentation Index
 
 - Literate architecture: [`docs/LITERATE_PROGRAMMING.md`](docs/LITERATE_PROGRAMMING.md)
 - Release design notes: [`docs/V0_0_1_LITERATE.md`](docs/V0_0_1_LITERATE.md)
 - Capability matrix: [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
+- TUI operator manual (keys/panels/modes): [`docs/TUI_OPERATOR_REFERENCE.md`](docs/TUI_OPERATOR_REFERENCE.md)
+- Operator cheat sheet (fast field card): [`docs/OPERATOR_CHEATSHEET.md`](docs/OPERATOR_CHEATSHEET.md)
+- Operator cheat sheet (A4 condensed): [`docs/OPERATOR_CHEATSHEET_A4.md`](docs/OPERATOR_CHEATSHEET_A4.md)
+- Pipelines + commands + follow-ups: [`docs/PIPELINES_AND_COMMANDS.md`](docs/PIPELINES_AND_COMMANDS.md)
+- Preinstalled tool-by-tool reference: [`docs/TOOLS_REFERENCE.md`](docs/TOOLS_REFERENCE.md)
+- Co-op CALDERA tutorial: [`docs/COOP_CALDERA_TUTORIAL.md`](docs/COOP_CALDERA_TUTORIAL.md)
+- Scoring model: [`docs/SCORING.md`](docs/SCORING.md)
 - Agent skill profile: [`SKILL.md`](SKILL.md)
 - Contribution workflow: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Security policy: [`SECURITY.md`](SECURITY.md)
 
 ## Operational Model (h3retik vs typical red-team TUI)
 
-| Dimension | Typical toolchains | h3retik v0.0.1 |
+| Dimension | Typical toolchains | h3retik v0.0.3 |
 |---|---|---|
 | Execution model | Mixed terminals and ad hoc scripts | Unified headless CLI bus (`kali` + `local`) |
 | Evidence model | Scattered outputs | Structured telemetry (`commands/findings/loot/exploits`) |
 | Workflow control | Script-level only | TUI CTRL + map/pwn/loot loop |
-| Domain coverage | Usually single-domain | Exploit + OSINT + onchain in one cockpit |
+| Domain coverage | Usually single-domain | Exploit + OSINT + onchain + co-op/C2 in one cockpit |
 | Operator guidance | Limited | OPSEC cues + next-best actions |
 
 ```mermaid
