@@ -52,3 +52,4 @@ Use concise prefixes:
 ## Security
 
 Follow `SECURITY.md` for vulnerability disclosure and sensitive reporting.
+Use private GitHub Security Advisories for exploitable reports; avoid public issues for live vulnerabilities.

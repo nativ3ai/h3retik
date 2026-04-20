@@ -297,3 +297,9 @@ h3retik
 - License: Apache 2.0 (`LICENSE`)
 - Contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Security policy: [`SECURITY.md`](SECURITY.md)
+
+## Security Reporting
+
+- Supported release line: `v0.0.3` (latest tagged release on `main`).
+- Report vulnerabilities privately through GitHub Security Advisories (preferred) or direct maintainer contact.
+- Do not publish exploitable details in public issues before coordinated disclosure.
