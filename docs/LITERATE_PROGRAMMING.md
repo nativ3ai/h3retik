@@ -34,7 +34,7 @@ Kali is provisioned by:
 - `Dockerfile.kali`
 - `docker-compose.yml`
 
-If `jsbb-kali` already exists on the machine, `h3retik` can attach to it instead of bringing up a fresh compose container, provided `H3RETIK_SKIP_UP=1` is set or the default container already matches the expected name.
+If `h3retik-kali` already exists on the machine, `h3retik` can attach to it instead of bringing up a fresh compose container, provided `H3RETIK_SKIP_UP=1` is set or the default container already matches the expected name.
 
 ### 2.3 Evidence Plane
 

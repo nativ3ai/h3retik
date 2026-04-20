@@ -4,7 +4,7 @@ This matrix documents the mounted suite and how each class is exposed in h3retik
 
 ## Runtime Topology
 
-- Kali container: `${H3RETIK_KALI_CONTAINER:-jsbb-kali}`
+- Kali container: `${H3RETIK_KALI_CONTAINER:-h3retik-kali}`
 - Compose service: `kali`
 - Image tag: `${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.3}`
 - Persistent mounts:

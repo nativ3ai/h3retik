@@ -56,7 +56,7 @@ This makes the meter fit real execution context instead of static tags.
 
 Scoring is target-agnostic and telemetry-native:
 
-- no dependency on Juice Shop-specific constants
+- no dependency on target-specific constants
 - same model works across arbitrary targets as long as telemetry is emitted
 
 ## 4) Implementation Anchors
@@ -74,4 +74,3 @@ When adjusting scoring:
 2. update classification logic,
 3. validate with `go test ./...`,
 4. keep neutral controls neutral unless policy changes.
-

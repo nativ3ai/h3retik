@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT="${H3RETIK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo "0.0.3")"
-KALI_CONTAINER="${H3RETIK_KALI_CONTAINER:-jsbb-kali}"
+KALI_CONTAINER="${H3RETIK_KALI_CONTAINER:-h3retik-kali}"
 KALI_IMAGE="${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.3}"
+export H3RETIK_KALI_CONTAINER="$KALI_CONTAINER"
+export H3RETIK_KALI_IMAGE="$KALI_IMAGE"
 
 die() {
   echo "h3retik: $*" >&2
@@ -24,6 +26,10 @@ ensure_tui() {
   if [[ -x "$ROOT/bin/juicetui" ]]; then
     return
   fi
+  build_tui
+}
+
+build_tui() {
   command -v go >/dev/null 2>&1 || die "go is required to build juicetui"
   run_root go build -o bin/juicetui ./cmd/juicetui
 }
@@ -61,14 +67,18 @@ Usage:
   h3retik target <args...>         # passthrough to scripts/targetctl.py
   h3retik pipeline <args...>       # passthrough to scripts/security_pipeline.py
   h3retik observatory <args...>    # passthrough to scripts/observatory_runner.py
+  h3retik import-runs <path> [--all] # import saved campaigns into local telemetry/runs
+  h3retik tools list               # show optional tool bundles + installed status (inside kali)
+  h3retik tools install <bundle|tool1,tool2,...> # install optional tools in kali on demand
   h3retik reset                    # reset telemetry + custom target
   h3retik doctor                   # quick environment + runtime checks
+  h3retik update                   # pull latest h3retik from GitHub and reinstall globally
   h3retik install                  # install global launcher in ~/.local/bin
   h3retik version                  # print version
   h3retik help                     # show this help
 
 Env overrides:
-  H3RETIK_KALI_CONTAINER           # default: jsbb-kali
+  H3RETIK_KALI_CONTAINER           # default: h3retik-kali
   H3RETIK_KALI_IMAGE               # default: h3retik/kali:v0.0.3 (compose mode)
   H3RETIK_SKIP_UP=1                # skip docker compose up (attach to existing container)
 EOF
@@ -140,7 +150,7 @@ case "$cmd" in
     run_root docker compose down
     ;;
   build)
-    ensure_tui
+    build_tui
     echo "built: $ROOT/bin/juicetui"
     ;;
   build-kali)
@@ -211,6 +221,81 @@ case "$cmd" in
     ensure_deps
     run_root python3 ./scripts/observatory_runner.py "$@"
     ;;
+  tools)
+    shift || true
+    ensure_deps
+    ensure_kali_runtime
+    sub="${1:-list}"
+    shift || true
+    case "$sub" in
+      list)
+        exec docker exec "$KALI_CONTAINER" bash -lc '
+set -e
+echo "[bundle] recon-plus: masscan,rustscan,naabu,zmap,nbtscan,subfinder"
+for t in masscan rustscan naabu zmap nbtscan subfinder; do
+  if command -v "$t" >/dev/null 2>&1; then
+    echo "  [ok] $t -> $(command -v "$t")"
+  else
+    echo "  [missing] $t"
+  fi
+done
+'
+        ;;
+      install)
+        spec="${1:-recon-plus}"
+        shift || true
+        exec docker exec "$KALI_CONTAINER" bash -lc "
+set -e
+spec='$spec'
+if [ \"\$spec\" = \"recon-plus\" ]; then
+  tools='masscan rustscan naabu zmap nbtscan subfinder'
+else
+  tools=\$(echo \"\$spec\" | tr ',' ' ')
+fi
+apt-get update >/dev/null
+for t in \$tools; do
+  case \"\$t\" in
+    masscan|rustscan|zmap|nbtscan)
+      apt-get install -y --no-install-recommends \"\$t\" >/dev/null || echo \"[warn] apt install failed for \$t\"
+      ;;
+    naabu)
+      if ! command -v naabu >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest || echo \"[warn] go install failed for naabu\"
+      fi
+      ;;
+    subfinder)
+      if ! command -v subfinder >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest || echo \"[warn] go install failed for subfinder\"
+      fi
+      ;;
+    *)
+      apt-get install -y --no-install-recommends \"\$t\" >/dev/null || echo \"[warn] unknown/failed tool \$t\"
+      ;;
+  esac
+done
+echo '[tools] post-install status'
+for t in \$tools; do
+  if command -v \"\$t\" >/dev/null 2>&1; then
+    echo \"  [ok] \$t -> \$(command -v \"\$t\")\"
+  else
+    echo \"  [missing] \$t\"
+  fi
+done
+"
+        ;;
+      *)
+        die "unknown tools subcommand: $sub (use: list|install)"
+        ;;
+    esac
+    ;;
+  import-runs)
+    shift || true
+    ensure_deps
+    [[ $# -ge 1 ]] || die "usage: h3retik import-runs <path> [--all]"
+    path="$1"
+    shift || true
+    run_root python3 ./scripts/telemetryctl.py import-run --path "$path" "$@"
+    ;;
   reset)
     ensure_deps
     run_root ./scripts/reset_lab.sh
@@ -231,6 +316,25 @@ case "$cmd" in
     docker exec "$KALI_CONTAINER" bash -lc 'osint-stack-check' || true
     docker exec "$KALI_CONTAINER" bash -lc 'onchain-stack-check' || true
     docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-check' || true
+    ;;
+  update)
+    ensure_deps
+    if [[ -x "$ROOT/scripts/bootstrap_h3retik.sh" ]]; then
+      exec "$ROOT/scripts/bootstrap_h3retik.sh"
+    fi
+    # fallback if running from an install payload without bootstrap script
+    SRC_DIR="${H3RETIK_SRC_DIR:-$HOME/.local/src/h3retik}"
+    REPO_URL="${H3RETIK_REPO_URL:-https://github.com/nativ3ai/h3retik.git}"
+    mkdir -p "$(dirname "$SRC_DIR")"
+    if [[ -d "$SRC_DIR/.git" ]]; then
+      git -C "$SRC_DIR" fetch --all --prune
+      git -C "$SRC_DIR" checkout main
+      git -C "$SRC_DIR" pull --ff-only
+    else
+      rm -rf "$SRC_DIR"
+      git clone "$REPO_URL" "$SRC_DIR"
+    fi
+    exec "$SRC_DIR/scripts/install_h3retik.sh"
     ;;
   install)
     shift || true

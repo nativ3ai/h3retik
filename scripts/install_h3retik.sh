@@ -11,6 +11,19 @@ LAUNCHER="$BIN_DIR/h3retik"
 
 mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
 
+BACKUP_DIR=""
+if [[ -d "$INSTALL_ROOT" ]]; then
+  BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/h3retik-install-backup.XXXXXX")"
+  if [[ -d "$INSTALL_ROOT/telemetry" ]]; then
+    mkdir -p "$BACKUP_DIR/telemetry"
+    cp -R "$INSTALL_ROOT/telemetry/." "$BACKUP_DIR/telemetry/" 2>/dev/null || true
+  fi
+  if [[ -d "$INSTALL_ROOT/artifacts" ]]; then
+    mkdir -p "$BACKUP_DIR/artifacts"
+    cp -R "$INSTALL_ROOT/artifacts/." "$BACKUP_DIR/artifacts/" 2>/dev/null || true
+  fi
+fi
+
 rm -rf "$INSTALL_ROOT"
 mkdir -p "$INSTALL_ROOT"
 
@@ -39,6 +52,16 @@ done
 
 mkdir -p "$INSTALL_ROOT/telemetry" "$INSTALL_ROOT/artifacts" "$INSTALL_ROOT/bin"
 touch "$INSTALL_ROOT/artifacts/.gitkeep"
+
+if [[ -n "$BACKUP_DIR" ]]; then
+  if [[ -d "$BACKUP_DIR/telemetry" ]]; then
+    cp -R "$BACKUP_DIR/telemetry/." "$INSTALL_ROOT/telemetry/" 2>/dev/null || true
+  fi
+  if [[ -d "$BACKUP_DIR/artifacts" ]]; then
+    cp -R "$BACKUP_DIR/artifacts/." "$INSTALL_ROOT/artifacts/" 2>/dev/null || true
+  fi
+  rm -rf "$BACKUP_DIR"
+fi
 
 cat >"$LAUNCHER" <<EOF
 #!/usr/bin/env bash

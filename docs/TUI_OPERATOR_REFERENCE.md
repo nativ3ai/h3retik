@@ -271,7 +271,7 @@ Runtime resolution:
 - Default execution path uses compose service `kali` container.
 - Override container name with `H3RETIK_KALI_CONTAINER`.
 - Override compose image with `H3RETIK_KALI_IMAGE`.
-- If `jsbb-kali` already exists and is running, `h3retik` reuses it automatically.
+- If `h3retik-kali` already exists and is running, `h3retik` reuses it automatically.
 - Use `H3RETIK_SKIP_UP=1` to attach to an existing running container and skip compose startup.
 - Use `h3retik attach` to launch TUI against an existing running container only.
 - In TUI, runtime can be changed live in `CTRL -> TARGET`:
@@ -297,6 +297,22 @@ Runtime resolution:
 4. Execute (`enter` or `f`).
 5. Validate outcomes in `OPS` and updated `PWNED`/`LOOT`.
 6. Repeat until objective path is complete.
+
+## 8.2) New Campaign (Without Changing Target)
+
+Use this when you want a clean run on the same target/scope:
+
+1. Go to `CTRL -> HISTORY`.
+2. Select `Start New Campaign (Archive + Reset)`.
+3. Execute with `enter`/`f`.
+
+Behavior:
+
+- Archives current telemetry into `telemetry/runs/<timestamp>`.
+- Archives current live artifacts into `artifacts/runs/<timestamp>`.
+- Clears live telemetry streams (`commands/findings/loot/exploits`) for a fresh campaign.
+- Preserves target scope in `telemetry/state.json`.
+- Previous campaigns remain loadable from replay/history.
 
 ## 9) Co-op (CALDERA) in TUI
 
@@ -334,7 +350,7 @@ Single-command attach:
 h3retik --kali-container my-kali attach
 ```
 
-If the default `jsbb-kali` container is already running, plain `h3retik` is enough.
+If the default `h3retik-kali` container is already running, plain `h3retik` is enough.
 
 Headless co-op quick checks:
 
@@ -350,6 +366,25 @@ Replay usage:
 h3retik
 # CTRL -> HISTORY -> load latest replay
 ```
+
+## 10.1) Startup Campaign Chooser
+
+When no live campaign is tied to current telemetry, startup opens a pre-cockpit chooser:
+
+- `Start New Campaign`
+- `Load Campaign From Directory` (saved runs under `telemetry/runs`)
+- `Load Campaign From File/Path` (folder browser; select telemetry directory)
+- `Import Campaign Into Local Runs` (browse any telemetry folder and import into local `telemetry/runs`)
+
+This chooser is skipped when a campaign is already loaded (live or replay path).
+
+## 10.2) LOOT Fog Mission (`o`)
+
+In `LOOT`, `o` toggles fog-of-war mission view:
+
+- Left pane: skull mission map with progressive stage state (`FOG`/`OPEN`/`PWN`).
+- Right pane: selected stage brief + mapped runnable commands.
+- Navigation: `↑/↓` stage, `,/.` command, `enter/f` fire, `o` exit fog view.
 
 ## 11) Notes on Modularity
 

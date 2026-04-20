@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -89,6 +91,12 @@ type lootResultMsg struct {
 	Command string
 	Err     error
 	Output  string
+}
+
+type startupResultMsg struct {
+	Op     string
+	Err    error
+	Output string
 }
 
 type archGraphResultMsg struct {
@@ -390,6 +398,24 @@ var osintTaxonomyPoints = []osintTaxonomyPoint{
 	{Key: "backup_path", Token: "<<ARCHIVE_PATH>>", Marker: "ARCHIVE PATH", Phase: "REPORTING", Description: "Evidence archival/export checkpoint before final report generation."},
 }
 
+type lootFogStage struct {
+	Key         string
+	Title       string
+	Description string
+	Group       string
+	Requires    []string
+}
+
+var lootFogStages = []lootFogStage{
+	{Key: "recon", Title: "Frontal Surface Recon", Description: "Map exposed services and request paths with low-noise discovery.", Group: "Recon", Requires: nil},
+	{Key: "surface", Title: "Orbital Surface Expansion", Description: "Expand endpoint and technology surface to build exploit hypotheses.", Group: "Surface", Requires: []string{"recon"}},
+	{Key: "breach", Title: "Maxillary Breach Path", Description: "Attempt entry vectors and validate initial compromise paths.", Group: "Exploit", Requires: []string{"recon"}},
+	{Key: "access", Title: "Infraorbital Access Chain", Description: "Validate auth paths and establish reusable access footholds.", Group: "Access", Requires: []string{"breach"}},
+	{Key: "objective", Title: "Mandibular Objective Control", Description: "Escalate, tamper, and complete objective-grade access.", Group: "Objective", Requires: []string{"access", "tamper"}},
+}
+
+var lootFogVisualOrder = []string{"surface", "recon", "breach", "access", "objective"}
+
 type model struct {
 	width                   int
 	height                  int
@@ -423,6 +449,9 @@ type model struct {
 	lootRawMode             bool
 	lootOSINTMode           bool
 	lootOnchainMode         bool
+	lootFogMode             bool
+	lootFogStageIdx         int
+	lootFogActionIdx        int
 	replayStatus            string
 	controlSection          int
 	launchIdx               int
@@ -518,15 +547,32 @@ type model struct {
 	splashFrames            []splashFrame
 	loadingFrames           []splashFrame
 	ready                   bool
+	startupActive           bool
+	startupScreen           string
+	startupIdx              int
+	startupRuns             []string
+	startupBrowsePath       string
+	startupBrowseIdx        int
+	startupBrowseMode       string
+	startupBrowseStatus     string
+	startupBusy             bool
+	confirmNewCampaign      bool
 }
 
 func initialModel(root string) model {
+	telemetryDir := detectTelemetryDir(root)
+	showStartup := shouldShowStartupCampaignMenu(root, telemetryDir)
+	startupRuns := discoverReplayRuns(root)
+	startupBrowsePath := root
+	if looksLikeTelemetryDir(root) {
+		startupBrowsePath = filepath.Dir(root)
+	}
 	spin := spinner.New()
 	spin.Spinner = spinner.MiniDot
 	spin.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
 	return model{
 		root:         root,
-		telemetryDir: detectTelemetryDir(root),
+		telemetryDir: telemetryDir,
 		keys: keyMap{
 			Up:          key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 			Down:        key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
@@ -583,11 +629,322 @@ func initialModel(root string) model {
 		exploitBruteManualUser:  "",
 		exploitBruteManualPass:  "",
 		exploitBruteManualToken: "",
+		startupActive:           showStartup,
+		startupScreen:           "menu",
+		startupRuns:             startupRuns,
+		startupBrowsePath:       startupBrowsePath,
+		startupBrowseIdx:        0,
+		startupBrowseMode:       "load",
+		startupBrowseStatus:     "",
 	}
 }
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, tickCmd())
+}
+
+func shouldShowStartupCampaignMenu(root, telemetryDir string) bool {
+	if looksLikeTelemetryDir(root) && !strings.EqualFold(filepath.Base(root), "telemetry") {
+		return false
+	}
+	for _, name := range []string{"commands.jsonl", "findings.jsonl", "loot.jsonl", "exploits.jsonl"} {
+		path := filepath.Join(telemetryDir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(data)) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func startupCmd(root, op string) tea.Cmd {
+	return func() tea.Msg {
+		switch strings.ToLower(strings.TrimSpace(op)) {
+		case "new-campaign":
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "python3", "./scripts/telemetryctl.py", "new-campaign")
+			cmd.Dir = root
+			out, err := cmd.CombinedOutput()
+			if ctx.Err() == context.DeadlineExceeded {
+				return startupResultMsg{
+					Op:     op,
+					Err:    fmt.Errorf("new campaign timed out after 45s"),
+					Output: string(out),
+				}
+			}
+			return startupResultMsg{Op: op, Err: err, Output: string(out)}
+		default:
+			return startupResultMsg{Op: op, Err: fmt.Errorf("unsupported startup op: %s", op)}
+		}
+	}
+}
+
+func startupMenuItems() []string {
+	return []string{
+		"Start New Campaign",
+		"Load Campaign From Directory",
+		"Load Campaign From File/Path",
+		"Import Campaign Into Local Runs",
+		"Quit",
+	}
+}
+
+func browseEntries(path string) []os.DirEntry {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDir() != entries[j].IsDir() {
+			return entries[i].IsDir()
+		}
+		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
+	})
+	return entries
+}
+
+func (m *model) handleStartupKey(msg tea.KeyMsg) tea.Cmd {
+	if m.startupBusy {
+		if key.Matches(msg, m.keys.Quit) {
+			return tea.Quit
+		}
+		return nil
+	}
+	switch m.startupScreen {
+	case "runs":
+		switch {
+		case key.Matches(msg, m.keys.Up):
+			if len(m.startupRuns) > 0 {
+				m.startupIdx = clampWrap(m.startupIdx-1, len(m.startupRuns))
+			}
+		case key.Matches(msg, m.keys.Down):
+			if len(m.startupRuns) > 0 {
+				m.startupIdx = clampWrap(m.startupIdx+1, len(m.startupRuns))
+			}
+		case key.Matches(msg, m.keys.Select):
+			if len(m.startupRuns) == 0 {
+				m.startupBrowseStatus = "no saved campaigns found"
+				return nil
+			}
+			selected := m.startupRuns[clamp(m.startupIdx, 0, len(m.startupRuns)-1)]
+			m.telemetryDir = selected
+			m.startupActive = false
+			m.reload()
+			return nil
+		case key.Matches(msg, m.keys.PrevPane) || key.Matches(msg, m.keys.Left) || msg.String() == "esc":
+			m.startupScreen = "menu"
+			m.startupIdx = 0
+		case key.Matches(msg, m.keys.Quit):
+			return tea.Quit
+		}
+		return nil
+	case "browse":
+		entries := browseEntries(m.startupBrowsePath)
+		total := len(entries) + 1 // include ".."
+		switch {
+		case key.Matches(msg, m.keys.Up):
+			if total > 0 {
+				m.startupBrowseIdx = clampWrap(m.startupBrowseIdx-1, total)
+			}
+		case key.Matches(msg, m.keys.Down):
+			if total > 0 {
+				m.startupBrowseIdx = clampWrap(m.startupBrowseIdx+1, total)
+			}
+		case key.Matches(msg, m.keys.Select):
+			if m.startupBrowseIdx == 0 {
+				parent := filepath.Dir(m.startupBrowsePath)
+				if parent != "" && parent != m.startupBrowsePath {
+					m.startupBrowsePath = parent
+					m.startupBrowseIdx = 0
+				}
+				return nil
+			}
+			entry := entries[clamp(m.startupBrowseIdx-1, 0, len(entries)-1)]
+			path := filepath.Join(m.startupBrowsePath, entry.Name())
+			if entry.IsDir() {
+				if looksLikeTelemetryDir(path) {
+					if strings.EqualFold(strings.TrimSpace(m.startupBrowseMode), "import") {
+						dest, err := importTelemetryCampaignRun(m.root, path)
+						if err != nil {
+							m.startupBrowseStatus = "import failed :: " + err.Error()
+							return nil
+						}
+						m.startupRuns = discoverReplayRuns(m.root)
+						m.telemetryDir = dest
+						m.startupActive = false
+						m.startupBrowseStatus = "imported :: " + filepath.Base(dest)
+						m.reload()
+						return nil
+					}
+					m.telemetryDir = path
+					m.startupActive = false
+					m.reload()
+					return nil
+				}
+				m.startupBrowsePath = path
+				m.startupBrowseIdx = 0
+				return nil
+			}
+			if strings.EqualFold(entry.Name(), "state.json") && looksLikeTelemetryDir(m.startupBrowsePath) {
+				if strings.EqualFold(strings.TrimSpace(m.startupBrowseMode), "import") {
+					dest, err := importTelemetryCampaignRun(m.root, m.startupBrowsePath)
+					if err != nil {
+						m.startupBrowseStatus = "import failed :: " + err.Error()
+						return nil
+					}
+					m.startupRuns = discoverReplayRuns(m.root)
+					m.telemetryDir = dest
+					m.startupActive = false
+					m.startupBrowseStatus = "imported :: " + filepath.Base(dest)
+					m.reload()
+					return nil
+				}
+				m.telemetryDir = m.startupBrowsePath
+				m.startupActive = false
+				m.reload()
+				return nil
+			}
+			if strings.EqualFold(strings.TrimSpace(m.startupBrowseMode), "import") {
+				m.startupBrowseStatus = "select a telemetry directory to import"
+			} else {
+				m.startupBrowseStatus = "select a telemetry directory (contains state.json + jsonl streams)"
+			}
+		case key.Matches(msg, m.keys.PrevPane) || key.Matches(msg, m.keys.Left) || msg.String() == "esc":
+			m.startupScreen = "menu"
+			m.startupIdx = 0
+			m.startupBrowseMode = "load"
+		case key.Matches(msg, m.keys.Quit):
+			return tea.Quit
+		}
+		return nil
+	default:
+		items := startupMenuItems()
+		switch {
+		case key.Matches(msg, m.keys.Up):
+			m.startupIdx = clampWrap(m.startupIdx-1, len(items))
+		case key.Matches(msg, m.keys.Down):
+			m.startupIdx = clampWrap(m.startupIdx+1, len(items))
+		case key.Matches(msg, m.keys.Select):
+			choice := items[clamp(m.startupIdx, 0, len(items)-1)]
+			switch choice {
+			case "Start New Campaign":
+				m.startupBusy = true
+				m.startupBrowseStatus = "starting new campaign..."
+				return startupCmd(m.root, "new-campaign")
+			case "Load Campaign From Directory":
+				m.startupRuns = discoverReplayRuns(m.root)
+				m.startupScreen = "runs"
+				m.startupIdx = 0
+			case "Load Campaign From File/Path":
+				m.startupScreen = "browse"
+				m.startupBrowseMode = "load"
+				m.startupBrowsePath = filepath.Dir(m.root)
+				if m.startupBrowsePath == "" {
+					m.startupBrowsePath = m.root
+				}
+				m.startupBrowseIdx = 0
+			case "Import Campaign Into Local Runs":
+				m.startupScreen = "browse"
+				m.startupBrowseMode = "import"
+				m.startupBrowsePath = filepath.Dir(m.root)
+				if m.startupBrowsePath == "" {
+					m.startupBrowsePath = m.root
+				}
+				m.startupBrowseIdx = 0
+				m.startupBrowseStatus = "select a telemetry directory to import into local runs"
+			case "Quit":
+				return tea.Quit
+			}
+		case key.Matches(msg, m.keys.Quit):
+			return tea.Quit
+		}
+		return nil
+	}
+}
+
+func (m model) startupCampaignView() string {
+	title := lipgloss.NewStyle().Foreground(lipgloss.Color("204")).Bold(true).Render("H3RETIK // CAMPAIGN BOOT")
+	sub := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("select campaign source before cockpit launch")
+	lines := []string{title, sub, ""}
+	switch m.startupScreen {
+	case "runs":
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("saved campaigns (telemetry/runs)"))
+		if len(m.startupRuns) == 0 {
+			lines = append(lines, "no saved campaigns found")
+		}
+		for i, run := range m.startupRuns {
+			prefix := "  "
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+			if i == clamp(m.startupIdx, 0, max(0, len(m.startupRuns)-1)) {
+				prefix = "▸ "
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
+			}
+			lines = append(lines, style.Render(prefix+filepath.Base(run)))
+		}
+		lines = append(lines, "", lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("enter load  |  esc back"))
+	case "browse":
+		modeLabel := "load"
+		if strings.EqualFold(strings.TrimSpace(m.startupBrowseMode), "import") {
+			modeLabel = "import"
+		}
+		lines = append(lines,
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("browse telemetry folders"),
+			metricLine("mode", modeLabel),
+			metricLine("path", m.startupBrowsePath),
+		)
+		entries := browseEntries(m.startupBrowsePath)
+		display := []string{"../"}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() {
+				if looksLikeTelemetryDir(filepath.Join(m.startupBrowsePath, name)) {
+					name += "/ [campaign]"
+				} else {
+					name += "/"
+				}
+			}
+			display = append(display, name)
+		}
+		for i, item := range display {
+			prefix := "  "
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+			if i == clamp(m.startupBrowseIdx, 0, max(0, len(display)-1)) {
+				prefix = "▸ "
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
+			}
+			lines = append(lines, style.Render(prefix+truncate(item, max(24, m.width-14))))
+		}
+		if strings.EqualFold(strings.TrimSpace(m.startupBrowseMode), "import") {
+			lines = append(lines, "", lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("enter open/import  |  esc back"))
+		} else {
+			lines = append(lines, "", lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("enter open/load  |  esc back"))
+		}
+	default:
+		items := startupMenuItems()
+		for i, item := range items {
+			prefix := "  "
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+			if i == clamp(m.startupIdx, 0, len(items)-1) {
+				prefix = "▸ "
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
+			}
+			lines = append(lines, style.Render(prefix+item))
+		}
+		lines = append(lines, "", lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("up/down select  |  enter confirm  |  q quit"))
+	}
+	if strings.TrimSpace(m.startupBrowseStatus) != "" {
+		lines = append(lines, "", metricLine("status", m.startupBrowseStatus))
+	}
+	body := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("99")).
+		Padding(1, 2).
+		Render(strings.Join(lines, "\n"))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -613,6 +970,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case controlResultMsg:
+		if isNewCampaignControlResult(msg) {
+			// Always pivot back to live telemetry view after attempting new campaign.
+			m.telemetryDir = detectTelemetryDir(m.root)
+			m.replayRunIdx = 0
+			m.reload()
+		}
 		m.controlBusy = false
 		m.controlLastLabel = msg.Label
 		m.controlLastCommand = msg.Command
@@ -689,7 +1052,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.archGraphUntil = time.Now().Add(2300 * time.Millisecond)
 		return m, nil
+	case startupResultMsg:
+		m.startupBusy = false
+		if msg.Err != nil {
+			m.startupBrowseStatus = "failed :: " + msg.Err.Error()
+			return m, nil
+		}
+		if strings.EqualFold(strings.TrimSpace(msg.Op), "new-campaign") {
+			m.telemetryDir = detectTelemetryDir(m.root)
+			m.startupActive = false
+			m.startupBrowseStatus = "ok :: fresh campaign started"
+			m.reload()
+			return m, nil
+		}
+		return m, nil
 	case tea.KeyMsg:
+		if m.startupActive {
+			return m, m.handleStartupKey(msg)
+		}
+		if m.confirmNewCampaign && !key.Matches(msg, m.keys.Select) && !key.Matches(msg, m.keys.Fire) {
+			m.confirmNewCampaign = false
+		}
 		if m.manualTargetMode {
 			switch msg.String() {
 			case "esc":
@@ -830,9 +1213,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tab == 0 && m.archMapMode && strings.EqualFold(strings.TrimSpace(m.fireMode), "exploit") {
 				m.cycleArchGraphAction(1)
 			}
-			if m.tab == 3 && !m.lootOSINTMode {
+			if m.tab == 3 && !m.lootFogMode {
 				if actions := lootFollowupActionsForSelection(m.loot, m.lootIdx, m.state.TargetURL, m.root); len(actions) > 0 {
 					m.lootActionIdx = (m.lootActionIdx + 1) % len(actions)
+				}
+			}
+			if m.tab == 3 && m.lootFogMode {
+				if actions := m.lootFogStageActions(); len(actions) > 0 {
+					m.lootFogActionIdx = (m.lootFogActionIdx + 1) % len(actions)
 				}
 			}
 			if m.tab == 4 {
@@ -859,9 +1247,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tab == 0 && m.archMapMode && strings.EqualFold(strings.TrimSpace(m.fireMode), "exploit") {
 				m.cycleArchGraphAction(-1)
 			}
-			if m.tab == 3 && !m.lootOSINTMode {
+			if m.tab == 3 && !m.lootFogMode {
 				if actions := lootFollowupActionsForSelection(m.loot, m.lootIdx, m.state.TargetURL, m.root); len(actions) > 0 {
 					m.lootActionIdx = (m.lootActionIdx + len(actions) - 1) % len(actions)
+				}
+			}
+			if m.tab == 3 && m.lootFogMode {
+				if actions := m.lootFogStageActions(); len(actions) > 0 {
+					m.lootFogActionIdx = (m.lootFogActionIdx + len(actions) - 1) % len(actions)
 				}
 			}
 			if m.tab == 4 {
@@ -932,8 +1325,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tab == 2 {
 				return m, m.submitPwnedAction()
 			}
-			if m.tab == 3 && !m.lootOSINTMode {
+			if m.tab == 3 && !m.lootFogMode {
 				return m, m.submitLootAction()
+			}
+			if m.tab == 3 && m.lootFogMode {
+				return m, m.submitLootFogAction()
 			}
 			if m.tab == 4 {
 				return m, m.triggerControlAction()
@@ -945,8 +1341,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tab == 2 {
 				return m, m.submitPwnedAction()
 			}
-			if m.tab == 3 && !m.lootOSINTMode {
+			if m.tab == 3 && !m.lootFogMode {
 				return m, m.submitLootAction()
+			}
+			if m.tab == 3 && m.lootFogMode {
+				return m, m.submitLootFogAction()
 			}
 		case msg.String() == "e" || msg.String() == "E":
 			if m.tab == 0 && m.archMapMode && strings.EqualFold(strings.TrimSpace(m.fireMode), "exploit") {
@@ -1016,6 +1415,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func isNewCampaignControlResult(msg controlResultMsg) bool {
+	meta := strings.ToLower(strings.TrimSpace(msg.Command + " " + msg.Label))
+	return strings.Contains(meta, "telemetryctl.py new-campaign") || strings.Contains(meta, "start new campaign")
+}
+
 func (m *model) move(delta int) {
 	switch m.tab {
 	case 0:
@@ -1067,9 +1471,10 @@ func (m *model) move(delta int) {
 			m.findingDetailScroll = 0
 		}
 	case 3:
-		if m.lootOSINTMode {
-			if len(osintTaxonomyPoints) > 0 {
-				m.osintTaxIdx = clampWrap(m.osintTaxIdx+delta, len(osintTaxonomyPoints))
+		if m.lootFogMode {
+			if len(lootFogVisualOrder) > 0 {
+				m.lootFogStageIdx = clamp(m.lootFogStageIdx+delta, 0, len(lootFogVisualOrder)-1)
+				m.lootFogActionIdx = 0
 			}
 			m.lootDetailScroll = 0
 			return
@@ -1353,7 +1758,7 @@ func lootCredentialFitAction(item lootEntry, targetURL, root string) (controlAct
 		Label:       "Loot Action :: credential fit sweep",
 		Description: credentialFitScanDescription(token, len(pairs) > 0),
 		Mode:        "kali",
-		Command:     "docker exec jsbb-kali bash -lc " + shellQuote(shell),
+		Command:     "docker exec h3retik-kali bash -lc " + shellQuote(shell),
 		KaliShell:   shell,
 	}, true
 }
@@ -1412,7 +1817,7 @@ func (m model) archCredentialFitScanAction(node attackGraphNode) (controlAction,
 		Label:       "Credential Fit Scan",
 		Description: description,
 		Mode:        "kali",
-		Command:     "docker exec jsbb-kali bash -lc " + shellQuote(shell),
+		Command:     "docker exec h3retik-kali bash -lc " + shellQuote(shell),
 		KaliShell:   shell,
 	}, true
 }
@@ -2248,22 +2653,21 @@ func (m model) buildArchEditAction(node attackGraphNode, baseAction controlActio
 		Label:       "Map Edit :: " + method + " " + truncate(endpoint, 48),
 		Description: "Interactive map edit buffer execution (" + authHeader + ")",
 		Mode:        "kali",
-		Command:     "docker exec jsbb-kali bash -lc " + shellQuote(shell),
+		Command:     "docker exec h3retik-kali bash -lc " + shellQuote(shell),
 		KaliShell:   shell,
 	}, true
 }
 
 func (m *model) applyModeHotkey() {
 	if m.tab == 3 {
-		m.lootOSINTMode = !m.lootOSINTMode
-		if m.lootOSINTMode {
-			m.lootOnchainMode = false
-		}
+		m.lootFogMode = !m.lootFogMode
 		m.lootRawMode = false
 		m.lootDetailScroll = 0
 		m.ensureLootSelection()
-		if m.lootOSINTMode {
-			m.controlStatus = "ok :: LOOT switched to OSINT taxonomy view"
+		if m.lootFogMode {
+			m.lootFogStageIdx = 0
+			m.lootFogActionIdx = 0
+			m.controlStatus = "ok :: LOOT switched to FOG-OF-WAR mission view"
 		} else {
 			m.controlStatus = "ok :: LOOT switched to EXPLOIT view"
 		}
@@ -2307,6 +2711,7 @@ func (m *model) applyChainHotkey() {
 		m.lootOnchainMode = !m.lootOnchainMode
 		if m.lootOnchainMode {
 			m.lootOSINTMode = false
+			m.lootFogMode = false
 		}
 		m.lootRawMode = false
 		m.lootDetailScroll = 0
@@ -2565,6 +2970,9 @@ func (m *model) reload() {
 func (m model) View() string {
 	if !m.ready {
 		return "loading..."
+	}
+	if m.startupActive {
+		return m.startupCampaignView()
 	}
 	if time.Now().Before(m.splashUntil) {
 		return m.splashView()
@@ -3065,8 +3473,8 @@ func (m model) findingsView() string {
 }
 
 func (m model) lootView() string {
-	if m.lootOSINTMode {
-		return m.taxonomyView()
+	if m.lootFogMode {
+		return m.lootFogView()
 	}
 	leftWidth := max(44, m.width/2)
 	rightWidth := m.width - leftWidth - 2
@@ -3106,7 +3514,7 @@ func (m model) lootView() string {
 		detailLines := []string{
 			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("inventory mode"),
 			metricLine("mode", ternary(m.lootRawMode, "raw", "analysis")),
-			metricLine("scope", modeLabel+" LOOT (`o` OSINT panel, `c` ONCHAIN scope)"),
+			metricLine("scope", modeLabel+" LOOT (`o` fog mission, `c` ONCHAIN scope)"),
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(summaryLabel),
 			lootSummary(filteredLoot, rightWidth-4),
@@ -3187,7 +3595,7 @@ func (m model) lootView() string {
 			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: ,/. cycles operator actions"),
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press v to toggle raw/analyzed view"),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press o for OSINT taxonomy panel, c for ONCHAIN scope, g for CO-OP mode"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press o for fog mission view, c for ONCHAIN scope, g for CO-OP mode"),
 		)
 		if out := strings.TrimSpace(m.lootFireOutput); out != "" {
 			detailLines = append(detailLines,
@@ -3201,7 +3609,7 @@ func (m model) lootView() string {
 	if len(order) == 0 {
 		detail = strings.Join([]string{
 			metricLine("scope", ternary(m.lootOnchainMode, "ONCHAIN", "EXPLOIT")),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press o for OSINT panel, c for ONCHAIN scope, g for CO-OP mode"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press o for fog mission view, c for ONCHAIN scope, g for CO-OP mode"),
 			"",
 			loadingPanel(ternary(m.lootOnchainMode, "awaiting onchain artifacts", "awaiting exfiltrated artifacts"), m.currentLoadingFrame(), rightWidth),
 		}, "\n")
@@ -3210,6 +3618,215 @@ func (m model) lootView() string {
 		lipgloss.Top,
 		paneScrolled("[LOOT] EXTRACTED DATA :: "+ternary(m.lootOnchainMode, "ONCHAIN", "EXPLOIT"), leftBody, leftWidth, m.height-6, leftOffset),
 		paneScrolled("[ARCH] LOOT DETAIL", detail, rightWidth, m.height-6, m.lootDetailScroll),
+	)
+}
+
+func (m model) selectedLootFogStage() lootFogStage {
+	if len(lootFogVisualOrder) == 0 {
+		return lootFogStage{Key: "recon", Title: "Frontal Surface Recon", Group: "Recon"}
+	}
+	key := lootFogVisualOrder[clamp(m.lootFogStageIdx, 0, len(lootFogVisualOrder)-1)]
+	return lootFogStageByKey(key)
+}
+
+func lootFogStageByKey(key string) lootFogStage {
+	for _, item := range lootFogStages {
+		if strings.EqualFold(item.Key, key) {
+			return item
+		}
+	}
+	return lootFogStage{Key: "recon", Title: "Frontal Surface Recon", Group: "Recon"}
+}
+
+func stageStateTag(stage lootFogStage, snap chainSnapshot) string {
+	if ok, _ := requirementsReady(stage.Requires, snap); !ok {
+		return "FOG"
+	}
+	if requirementReady(stage.Key, snap) || (stage.Key == "surface" && snap.Recon) || (stage.Key == "objective" && snap.PrivEsc) {
+		return "PWN"
+	}
+	return "OPEN"
+}
+
+func colorStageLabel(label, state string, selected bool) string {
+	label = truncate(label, 18)
+	style := lipgloss.NewStyle()
+	switch state {
+	case "PWN":
+		style = style.Foreground(lipgloss.Color("196")).Bold(true)
+	case "OPEN":
+		style = style.Foreground(lipgloss.Color("220")).Bold(true)
+	default:
+		style = style.Foreground(lipgloss.Color("240"))
+	}
+	if selected {
+		style = style.Foreground(lipgloss.Color("231")).Underline(true).Bold(true)
+	}
+	return style.Render(label)
+}
+
+func renderLootFogSkull(snap chainSnapshot, selected string) string {
+	frontalStage := lootFogStageByKey("recon")
+	orbitalStage := lootFogStageByKey("surface")
+	maxillaryStage := lootFogStageByKey("breach")
+	infraStage := lootFogStageByKey("access")
+	mandibleStage := lootFogStageByKey("objective")
+	orbit := colorStageLabel("Orbital", stageStateTag(orbitalStage, snap), strings.EqualFold(selected, "surface"))
+	frontal := colorStageLabel("Frontal", stageStateTag(frontalStage, snap), strings.EqualFold(selected, "recon"))
+	maxillary := colorStageLabel("Maxillary", stageStateTag(maxillaryStage, snap), strings.EqualFold(selected, "breach"))
+	infra := colorStageLabel("Infraorbital", stageStateTag(infraStage, snap), strings.EqualFold(selected, "access"))
+	mandible := colorStageLabel("Mandibular", stageStateTag(mandibleStage, snap), strings.EqualFold(selected, "objective"))
+	return strings.Join([]string{
+		"              ___           _,.---,---.,_",
+		"              |         ,;~'             '~;,",
+		"              |       ,;                     ;,",
+		"     " + frontal + "  |      ;                         ; ,--- " + orbit,
+		"              |     ,'                         /'",
+		"              |    ,;                        /' ;,",
+		"              |    ; ;      .           . <-'  ; |",
+		"              |__  | ;   ______       ______   ;",
+		"             ___   |  '/~\"     ~\" . \"~     \"~\\'  |",
+		"             |     |  ~  ,-~~~^~, | ,~^~~~-,  ~  |",
+		"    " + maxillary + "  |      |   |        }:{        |",
+		"             |      |   l       / | \\       !   |",
+		"             |      .~  (__,.--\" .^. \"--.,__)  ~.",
+		"             |      |    ----;' / | \\ `;-<--------- " + infra,
+		"             |__     \\__.       \\/^\\/       .__/",
+		"                ___   V| \\                 / |V",
+		"                |      | |T~\\___!___!___/~T| |",
+		"                |      | |`IIII_I_I_I_IIII'| |",
+		"                |      |  \\,III I I I III,/  |",
+		"    " + mandible + " |       \\   `~~~~~~~~~~'    /",
+		"                |         \\   .       .",
+		"                |__         \\.    ^    ./",
+		"                              ^~~~^~~~^",
+	}, "\n")
+}
+
+func (m model) lootFogStageActions() []controlAction {
+	stage := m.selectedLootFogStage()
+	snap := deriveChainSnapshot(m.commands, m.findings, m.loot)
+	if ok, _ := requirementsReady(stage.Requires, snap); !ok {
+		return nil
+	}
+	all := m.filterUnsupportedKaliActions(m.exploitFireActions())
+	actions := make([]controlAction, 0, 8)
+	for _, action := range all {
+		if !strings.EqualFold(action.Group, stage.Group) {
+			continue
+		}
+		if strings.EqualFold(action.Mode, "internal") {
+			continue
+		}
+		if strings.Contains(strings.ToUpper(action.Label), "[MENU]") {
+			continue
+		}
+		actions = append(actions, action)
+	}
+	return actions
+}
+
+func (m *model) submitLootFogAction() tea.Cmd {
+	actions := m.lootFogStageActions()
+	if len(actions) == 0 {
+		m.lootFireBusy = false
+		m.lootFireStatus = "blocked :: selected fog stage has no runnable commands"
+		m.lootFireOutcome = "failed"
+		m.lootFireUntil = time.Now().Add(1900 * time.Millisecond)
+		return nil
+	}
+	m.lootFogActionIdx = clamp(m.lootFogActionIdx, 0, len(actions)-1)
+	action := actions[m.lootFogActionIdx]
+	if ok, reason := m.preflightControlAction(action); !ok {
+		m.lootFireBusy = false
+		m.lootFireStatus = "preflight failed :: " + reason
+		m.lootFireOutcome = "failed"
+		m.lootFireUntil = time.Now().Add(1900 * time.Millisecond)
+		return nil
+	}
+	m.lootFireBusy = true
+	m.lootFireStatus = "running :: " + truncate(action.Label, 56)
+	m.lootFireCommand = valueOr(action.Command, action.KaliShell)
+	m.lootFireOutput = ""
+	m.lootFireOutcome = "running"
+	return lootCmd(m.root, action)
+}
+
+func (m model) lootFogView() string {
+	leftWidth := max(66, m.width/2)
+	rightWidth := m.width - leftWidth - 2
+	snap := deriveChainSnapshot(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"))
+	stage := m.selectedLootFogStage()
+	actions := m.lootFogStageActions()
+	left := pane("[LOOT] FOG-OF-WAR MISSION MAP", renderLootFogSkull(snap, stage.Key), leftWidth, m.height-6)
+	lines := []string{
+		metricLine("stage", stage.Title),
+		metricLine("group", strings.ToUpper(stage.Group)),
+		metricLine("state", stageStateTag(stage, snap)),
+		metricLine("ctrl lane", "exploit > FIRE > "+strings.ToUpper(stage.Group)),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("stage order"),
+	}
+	for i, key := range lootFogVisualOrder {
+		item := lootFogStageByKey(key)
+		prefix := "  "
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+		if i == clamp(m.lootFogStageIdx, 0, len(lootFogVisualOrder)-1) {
+			prefix = "▸ "
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
+		}
+		state := stageStateTag(item, snap)
+		lines = append(lines, style.Render(prefix+fmt.Sprintf("%d. %s [%s]", i+1, truncate(item.Title, max(20, rightWidth-20)), state)))
+	}
+	lines = append(lines,
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("mission brief"),
+		wrap(stage.Description, rightWidth-4),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("mapped commands"),
+	)
+	if len(actions) == 0 {
+		lines = append(lines, "no runnable commands in this stage yet (locked or unavailable)")
+	} else {
+		idx := clamp(m.lootFogActionIdx, 0, len(actions)-1)
+		for i, action := range actions {
+			prefix := "  "
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+			if i == idx {
+				prefix = "▸ "
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
+			}
+			lines = append(lines, style.Render(prefix+truncate(action.Label, rightWidth-8)))
+			lines = append(lines, "   "+lipgloss.NewStyle().Foreground(lipgloss.Color("242")).Render(truncate(valueOr(action.Description, "no description"), rightWidth-10)))
+		}
+		selected := actions[idx]
+		lines = append(lines,
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("selected command"),
+			wrap(valueOr(selected.Description, "no description"), rightWidth-4),
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("command"),
+			wrap(valueOr(selected.Command, selected.KaliShell), rightWidth-4),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("opsec :: "+lootOpsecAlert(selected)),
+			metricLine("opsec meter", opsecMeter(actionEffectiveOpsecScore(selected, m.commands))),
+		)
+	}
+	lines = append(lines,
+		"",
+		metricLine("controls", "↑/↓ stage  ,/. command  enter/f run  o exit fog"),
+		metricLine("status", valueOr(m.lootFireStatus, "idle")+" "+taxonomyAnimation(m.lootFireOutcome, m.lootFireBusy, m.lootFireUntil)),
+	)
+	if out := strings.TrimSpace(m.lootFireOutput); out != "" {
+		lines = append(lines,
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("last output"),
+			wrap(truncate(out, max(120, rightWidth*2)), rightWidth-4),
+		)
+	}
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		left,
+		paneScrolled("[ARCH] FOG MISSION DETAIL", strings.Join(lines, "\n"), rightWidth, m.height-6, m.lootDetailScroll),
 	)
 }
 
@@ -3918,7 +4535,7 @@ func defaultTargetSuggestion() string {
 func kaliContainerName() string {
 	value := strings.TrimSpace(os.Getenv("H3RETIK_KALI_CONTAINER"))
 	if value == "" {
-		return "jsbb-kali"
+		return "h3retik-kali"
 	}
 	return value
 }
@@ -3972,8 +4589,14 @@ func firstShellCommandToken(shell string) string {
 		if clean == "" {
 			continue
 		}
-		if strings.Contains(clean, "=") && !strings.HasPrefix(clean, "/") && !strings.Contains(clean, "/") {
-			continue
+		if strings.Contains(clean, "=") {
+			parts := strings.SplitN(clean, "=", 2)
+			if len(parts) == 2 {
+				name := strings.TrimSpace(parts[0])
+				if matched, _ := regexp.MatchString(`^[A-Za-z_][A-Za-z0-9_]*$`, name); matched {
+					continue
+				}
+			}
 		}
 		if strings.HasPrefix(clean, "$") {
 			continue
@@ -5105,7 +5728,7 @@ func findingFollowupAction(f findingEntry, targetURL string, commands []commandE
 			Label:       "Fire Follow-Up :: endpoint probe",
 			Description: desc,
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"curl -sS -i " + shellQuote(endpointURL) + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"curl -sS -i " + shellQuote(endpointURL) + "\"",
 			KaliShell:   "curl -sS -i " + shellQuote(endpointURL),
 		}
 	}
@@ -5794,7 +6417,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 				Label:       "Loot Action :: mysql pivot (" + hint.User + "@" + hint.Host + ")",
 				Description: "Auto-built from extracted loot credentials.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"" + cmd + "\"",
+				Command:     "docker exec h3retik-kali bash -lc \"" + cmd + "\"",
 				KaliShell:   cmd,
 			})
 			sampleCmd := mysqlSampleRowsCommand(hint)
@@ -5802,7 +6425,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 				Label:       "Loot Action :: mysql schema/sample",
 				Description: "Enumerate schema metadata for exploit planning.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"" + sampleCmd + "\"",
+				Command:     "docker exec h3retik-kali bash -lc \"" + sampleCmd + "\"",
 				KaliShell:   sampleCmd,
 			})
 			if achievementSignal {
@@ -5811,7 +6434,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 					Label:       "Loot Action :: mysql achievements explore",
 					Description: "Read achievement/challenge rows from compromised DB.",
 					Mode:        "kali",
-					Command:     "docker exec jsbb-kali bash -lc \"" + readCmd + "\"",
+					Command:     "docker exec h3retik-kali bash -lc \"" + readCmd + "\"",
 					KaliShell:   readCmd,
 				})
 				if hasWritePrivilegeHint(meta) {
@@ -5820,7 +6443,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 						Label:       "Loot Action :: mysql achievements modify",
 						Description: "Attempt write on achievement/challenge records (high opsec impact).",
 						Mode:        "kali",
-						Command:     "docker exec jsbb-kali bash -lc \"" + writeAchCmd + "\"",
+						Command:     "docker exec h3retik-kali bash -lc \"" + writeAchCmd + "\"",
 						KaliShell:   writeAchCmd,
 					})
 				}
@@ -5831,7 +6454,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 					Label:       "Loot Action :: mysql write probe",
 					Description: "Verify write capability (high opsec impact).",
 					Mode:        "kali",
-					Command:     "docker exec jsbb-kali bash -lc \"" + writeCmd + "\"",
+					Command:     "docker exec h3retik-kali bash -lc \"" + writeCmd + "\"",
 					KaliShell:   writeCmd,
 				})
 			}
@@ -5841,7 +6464,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 				Label:       "Loot Action :: postgres pivot (" + hint.User + "@" + hint.Host + ")",
 				Description: "Auto-built from extracted loot credentials.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"" + cmd + "\"",
+				Command:     "docker exec h3retik-kali bash -lc \"" + cmd + "\"",
 				KaliShell:   cmd,
 			})
 			sampleCmd := postgresSampleRowsCommand(hint)
@@ -5849,7 +6472,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 				Label:       "Loot Action :: postgres schema/sample",
 				Description: "Enumerate schema metadata for exploit planning.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"" + sampleCmd + "\"",
+				Command:     "docker exec h3retik-kali bash -lc \"" + sampleCmd + "\"",
 				KaliShell:   sampleCmd,
 			})
 			if achievementSignal {
@@ -5858,7 +6481,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 					Label:       "Loot Action :: postgres achievements explore",
 					Description: "Read achievement/challenge rows from compromised DB.",
 					Mode:        "kali",
-					Command:     "docker exec jsbb-kali bash -lc \"" + readCmd + "\"",
+					Command:     "docker exec h3retik-kali bash -lc \"" + readCmd + "\"",
 					KaliShell:   readCmd,
 				})
 				if hasWritePrivilegeHint(meta) {
@@ -5867,7 +6490,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 						Label:       "Loot Action :: postgres achievements modify",
 						Description: "Attempt write on achievement/challenge records (high opsec impact).",
 						Mode:        "kali",
-						Command:     "docker exec jsbb-kali bash -lc \"" + writeAchCmd + "\"",
+						Command:     "docker exec h3retik-kali bash -lc \"" + writeAchCmd + "\"",
 						KaliShell:   writeAchCmd,
 					})
 				}
@@ -5878,7 +6501,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 					Label:       "Loot Action :: postgres write probe",
 					Description: "Verify write capability (high opsec impact).",
 					Mode:        "kali",
-					Command:     "docker exec jsbb-kali bash -lc \"" + writeCmd + "\"",
+					Command:     "docker exec h3retik-kali bash -lc \"" + writeCmd + "\"",
 					KaliShell:   writeCmd,
 				})
 			}
@@ -5942,7 +6565,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 				Label:       "Loot Action :: auth pivot check",
 				Description: "Test credential/token pivot against active target root.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"curl -sS -i " + shellQuote(strings.TrimRight(base, "/")) + "\"",
+				Command:     "docker exec h3retik-kali bash -lc \"curl -sS -i " + shellQuote(strings.TrimRight(base, "/")) + "\"",
 				KaliShell:   "curl -sS -i " + shellQuote(strings.TrimRight(base, "/")),
 			})
 		}
@@ -5953,7 +6576,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 				Label:       "Loot Action :: auth boundary check",
 				Description: "Probe discovered auth/API boundaries from current telemetry map.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc " + shellQuote(probeShell),
+				Command:     "docker exec h3retik-kali bash -lc " + shellQuote(probeShell),
 				KaliShell:   probeShell,
 			})
 		}
@@ -5980,7 +6603,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 				Label:       "Loot Action :: endpoint probe",
 				Description: "Probe discovered endpoint/path from loot signal.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"curl -sS -i " + shellQuote(target) + "\"",
+				Command:     "docker exec h3retik-kali bash -lc \"curl -sS -i " + shellQuote(target) + "\"",
 				KaliShell:   "curl -sS -i " + shellQuote(target),
 			})
 		}
@@ -5990,14 +6613,14 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 			Label:       "Loot Action :: collection inspect",
 			Description: "Fetch full HTTP response for dynamic parser and action planning.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"curl -sS -i " + shellQuote(target) + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"curl -sS -i " + shellQuote(target) + "\"",
 			KaliShell:   "curl -sS -i " + shellQuote(target),
 		})
 		actions = append(actions, controlAction{
 			Label:       "Loot Action :: collection body sample",
 			Description: "Body-only snapshot for fast diff/read when headers are not needed.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"curl -sS " + shellQuote(target) + " | sed -n '1,200p'\"",
+			Command:     "docker exec h3retik-kali bash -lc \"curl -sS " + shellQuote(target) + " | sed -n '1,200p'\"",
 			KaliShell:   "curl -sS " + shellQuote(target) + " | sed -n '1,200p'",
 		})
 		if token := strings.TrimSpace(latestTokenFromTelemetry(root)); token != "" && hasWritePrivilegeHint(meta) {
@@ -6009,7 +6632,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 				Label:       "Loot Action :: collection write probe",
 				Description: "Attempt authenticated update on discovered collection/record (high opsec impact).",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"curl -sS -X PATCH " + shellQuote(writeTarget) + " -H " + shellQuote("Authorization: Bearer "+token) + " -H 'Content-Type: application/json' --data " + shellQuote(payload) + "\"",
+				Command:     "docker exec h3retik-kali bash -lc \"curl -sS -X PATCH " + shellQuote(writeTarget) + " -H " + shellQuote("Authorization: Bearer "+token) + " -H 'Content-Type: application/json' --data " + shellQuote(payload) + "\"",
 				KaliShell:   "curl -sS -X PATCH " + shellQuote(writeTarget) + " -H " + shellQuote("Authorization: Bearer "+token) + " -H 'Content-Type: application/json' --data " + shellQuote(payload),
 			})
 		}
@@ -6019,7 +6642,7 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 			Label:       "Loot Action :: onchain inspect",
 			Description: "Display recent onchain loot artifacts for immediate operator review.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"find /artifacts/onchain -maxdepth 3 -type f 2>/dev/null | sort | tail -n 20\"",
+			Command:     "docker exec h3retik-kali bash -lc \"find /artifacts/onchain -maxdepth 3 -type f 2>/dev/null | sort | tail -n 20\"",
 			KaliShell:   "find /artifacts/onchain -maxdepth 3 -type f 2>/dev/null | sort | tail -n 20",
 		})
 	}
@@ -6208,7 +6831,7 @@ func taxonomyFollowupAction(category, sub, targetURL, deepEngine string) control
 			Label:       "Fire Follow-Up :: seed-harvest",
 			Description: "Initial seed harvest with theHarvester wrapper.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"osint-seed-harvest " + seed + " 200\"",
+			Command:     "docker exec h3retik-kali bash -lc \"osint-seed-harvest " + seed + " 200\"",
 			KaliShell:   "osint-seed-harvest " + seed + " 200",
 		}
 	case "DISCOVERY::ENTITY_EXPANSION", "DISCOVERY::INFRA_EXPANSION":
@@ -6216,7 +6839,7 @@ func taxonomyFollowupAction(category, sub, targetURL, deepEngine string) control
 			Label:       "Fire Follow-Up :: deep-automation",
 			Description: "Deep automation engine selected in CTRL FIRE mode.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"" + deepCmd + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"" + deepCmd + "\"",
 			KaliShell:   deepCmd,
 		}
 	case "COLLECTION::PASSIVE_PULL":
@@ -6224,7 +6847,7 @@ func taxonomyFollowupAction(category, sub, targetURL, deepEngine string) control
 			Label:       "Fire Follow-Up :: recon-ng",
 			Description: "Run recon-ng custom module chain for passive enrichment.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"osint-reconng \\\"" + reconCmd + "\\\"\"",
+			Command:     "docker exec h3retik-kali bash -lc \"osint-reconng \\\"" + reconCmd + "\\\"\"",
 			KaliShell:   "osint-reconng \"" + reconCmd + "\"",
 		}
 	case "COLLECTION::ACTIVE_PULL":
@@ -6232,7 +6855,7 @@ func taxonomyFollowupAction(category, sub, targetURL, deepEngine string) control
 			Label:       "Fire Follow-Up :: rengine-status",
 			Description: "Check reNgine scaffold/API readiness for deep web dive.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"osint-rengine local-status\"",
+			Command:     "docker exec h3retik-kali bash -lc \"osint-rengine local-status\"",
 			KaliShell:   "osint-rengine local-status",
 		}
 	case "PROCESSING::NORMALIZE", "PROCESSING::DEDUPE":
@@ -6240,7 +6863,7 @@ func taxonomyFollowupAction(category, sub, targetURL, deepEngine string) control
 			Label:       "Fire Follow-Up :: artifact-index",
 			Description: "List collected OSINT artifacts for normalization/dedupe.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"find /artifacts/osint -maxdepth 3 -type f 2>/dev/null | sort\"",
+			Command:     "docker exec h3retik-kali bash -lc \"find /artifacts/osint -maxdepth 3 -type f 2>/dev/null | sort\"",
 			KaliShell:   "find /artifacts/osint -maxdepth 3 -type f 2>/dev/null | sort",
 		}
 	case "ANALYSIS::CORRELATE", "ANALYSIS::RISK_SCORE":
@@ -6256,7 +6879,7 @@ func taxonomyFollowupAction(category, sub, targetURL, deepEngine string) control
 			Label:       "Fire Follow-Up :: stack-check",
 			Description: "Re-verify OSINT toolchain and close execution gaps.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"osint-stack-check\"",
+			Command:     "docker exec h3retik-kali bash -lc \"osint-stack-check\"",
 			KaliShell:   "osint-stack-check",
 		}
 	case "REPORTING::INTEL_EXPORT", "REPORTING::ACTION_BRIEF":
@@ -7459,7 +8082,7 @@ func exploitGraphNodeAction(node attackGraphNode, state stateFile, _ string) con
 				Description: description,
 				Mode:        "kali",
 				KaliShell:   "curl -sS -i " + shellQuote(endpoint),
-				Command:     "docker exec jsbb-kali bash -lc \"curl -sS -i " + shellQuote(endpoint) + "\"",
+				Command:     "docker exec h3retik-kali bash -lc \"curl -sS -i " + shellQuote(endpoint) + "\"",
 			}
 		}
 		return controlAction{
@@ -9838,6 +10461,102 @@ func looksLikeTelemetryDir(path string) bool {
 	return true
 }
 
+func inferCampaignRunID(source string) string {
+	base := strings.TrimSpace(filepath.Base(source))
+	match, _ := regexp.MatchString(`^\d{8}T\d{6}Z$`, base)
+	if match {
+		return base
+	}
+	return time.Now().UTC().Format("20060102T150405Z")
+}
+
+func importTelemetryCampaignRun(root, source string) (string, error) {
+	source = filepath.Clean(strings.TrimSpace(source))
+	if source == "" {
+		return "", errors.New("empty source path")
+	}
+	if !looksLikeTelemetryDir(source) {
+		return "", errors.New("source is not a telemetry campaign directory")
+	}
+	runsDir := filepath.Join(root, "telemetry", "runs")
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(source, filepath.Clean(runsDir)+string(os.PathSeparator)) {
+		return source, nil
+	}
+	runID := inferCampaignRunID(source)
+	dest := filepath.Join(runsDir, runID)
+	if filepath.Clean(source) == filepath.Clean(dest) {
+		return dest, nil
+	}
+	for i := 1; ; i++ {
+		if _, err := os.Stat(dest); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		dest = filepath.Join(runsDir, fmt.Sprintf("%s-%02d", runID, i))
+	}
+	if err := copyDirRecursive(source, dest); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+func copyDirRecursive(source, dest string) error {
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("source is not a directory: %s", source)
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		sourcePath := filepath.Join(source, entry.Name())
+		destPath := filepath.Join(dest, entry.Name())
+		if entry.IsDir() {
+			if err := copyDirRecursive(sourcePath, destPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := copyFile(sourcePath, destPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyFile(source, dest string) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
 func countSeverity(items []findingEntry, severity string) int {
 	count := 0
 	for _, item := range items {
@@ -10605,6 +11324,11 @@ func (m model) brutePreflightWarning(endpoint string) string {
 }
 
 func (m *model) applyControlResultSignals(msg controlResultMsg) {
+	commandMeta := strings.ToLower(strings.TrimSpace(msg.Command + " " + msg.Label))
+	if strings.Contains(commandMeta, "telemetryctl.py new-campaign") {
+		m.telemetryDir = detectTelemetryDir(m.root)
+		m.reload()
+	}
 	wrote := m.applyCredentialFitSignals(msg.Output)
 	hits := bruteHitsFromOutput(msg.Output)
 	if len(hits) == 0 {
@@ -10757,6 +11481,16 @@ func (m *model) triggerControlAction() tea.Cmd {
 		m.applyInternalAction(action)
 		return nil
 	}
+	if isNewCampaignAction(action) && !m.confirmNewCampaign {
+		m.confirmNewCampaign = true
+		m.controlStatus = "confirm required :: press Enter/f again to start new campaign"
+		m.controlOutcome = "idle"
+		m.controlUntil = time.Now().Add(2500 * time.Millisecond)
+		return nil
+	}
+	if isNewCampaignAction(action) {
+		m.confirmNewCampaign = false
+	}
 	if ok, reason := m.preflightControlAction(action); !ok {
 		m.controlStatus = "preflight failed :: " + reason
 		m.controlOutcome = "failed"
@@ -10792,6 +11526,11 @@ func (m *model) triggerControlAction() tea.Cmd {
 	m.controlOutput = ""
 	m.controlDetailScroll = 0
 	return controlCmd(m.root, action, m.currentControlTelemetryPhase())
+}
+
+func isNewCampaignAction(action controlAction) bool {
+	meta := strings.ToLower(strings.TrimSpace(action.Command + " " + strings.Join(action.Args, " ")))
+	return strings.Contains(meta, "telemetryctl.py new-campaign")
 }
 
 func (m *model) triggerArchGraphAction() tea.Cmd {
@@ -11222,7 +11961,7 @@ func (m model) moduleToAction(mod attackModule) controlAction {
 		action.Args = []string{"bash", "-lc", command}
 	default:
 		action.Mode = "kali"
-		action.Command = "docker exec jsbb-kali bash -lc " + shellQuote(command)
+		action.Command = "docker exec h3retik-kali bash -lc " + shellQuote(command)
 		action.KaliShell = command
 	}
 	return action
@@ -11578,14 +12317,14 @@ func (m model) launchActions() []controlAction {
 				Label:       "OSINT Stack Check",
 				Description: "Verify OSINT wrappers in Kali before investigation.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"osint-stack-check\"",
+				Command:     "docker exec h3retik-kali bash -lc \"osint-stack-check\"",
 				KaliShell:   "osint-stack-check",
 			},
 			{
 				Label:       "OSINT Artifact Index",
 				Description: "List collected OSINT artifacts.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"find /artifacts/osint -maxdepth 3 -type f 2>/dev/null | sort\"",
+				Command:     "docker exec h3retik-kali bash -lc \"find /artifacts/osint -maxdepth 3 -type f 2>/dev/null | sort\"",
 				KaliShell:   "find /artifacts/osint -maxdepth 3 -type f 2>/dev/null | sort",
 			},
 		}
@@ -11602,14 +12341,14 @@ func (m model) launchActions() []controlAction {
 				Label:       "ONCHAIN Stack Check",
 				Description: "Verify onchain wrappers and analyzers in Kali.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"onchain-stack-check\"",
+				Command:     "docker exec h3retik-kali bash -lc \"onchain-stack-check\"",
 				KaliShell:   "onchain-stack-check",
 			},
 			{
 				Label:       "ONCHAIN RPC Catalog",
 				Description: "Display available public/testnet RPC profiles.",
 				Mode:        "kali",
-				Command:     "docker exec jsbb-kali bash -lc \"onchain-rpc-catalog\"",
+				Command:     "docker exec h3retik-kali bash -lc \"onchain-rpc-catalog\"",
 				KaliShell:   "onchain-rpc-catalog",
 			},
 		}
@@ -12087,9 +12826,36 @@ func (m *model) preflightControlAction(action controlAction) (bool, string) {
 		if ok, reason := m.kaliPreflight(action); !ok {
 			return false, reason
 		}
+		if requiresCoopAPIRuntime(action) {
+			if ok, reason := coopAPIRuntimeReady(kaliContainerName()); !ok {
+				return false, reason
+			}
+		}
 		return true, warning
 	}
 	return true, warning
+}
+
+func requiresCoopAPIRuntime(action controlAction) bool {
+	meta := strings.ToLower(strings.TrimSpace(action.KaliShell + " " + action.Command + " " + action.Label + " " + action.ActionID))
+	return strings.Contains(meta, "coop-caldera-api")
+}
+
+func coopAPIRuntimeReady(container string) (bool, string) {
+	container = strings.TrimSpace(container)
+	if container == "" {
+		return false, "co-op runtime check failed: missing kali container"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "exec", container, "bash", "-lc", "coop-caldera-status >/dev/null 2>&1")
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return false, "co-op runtime check timed out (start CALDERA C2 first)"
+		}
+		return false, "co-op CALDERA API unavailable (run [COOP] Start CALDERA C2)"
+	}
+	return true, ""
 }
 
 func actionDone(action controlAction, commands []commandEntry) bool {
@@ -12128,7 +12894,7 @@ func (m model) customFireActions(mode string) []controlAction {
 		Label:       "[CUSTOM] Run (" + strings.ToUpper(runtime) + ")",
 		Description: "Run the current custom command in selected runtime.",
 		Mode:        "kali",
-		Command:     "docker exec jsbb-kali bash -lc \"" + command + "\"",
+		Command:     "docker exec h3retik-kali bash -lc \"" + command + "\"",
 		KaliShell:   command,
 	}
 	if runtime == "local" {
@@ -12218,7 +12984,7 @@ func (m model) exploitFireActions() []controlAction {
 			Label:       "[WEB] Nuclei Sweep",
 			Description: "Run nuclei template sweep directly against current target.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc " + shellQuote("nuclei -u "+targetURL+" -silent"),
+			Command:     "docker exec h3retik-kali bash -lc " + shellQuote("nuclei -u "+targetURL+" -silent"),
 			KaliShell:   "nuclei -u " + targetURL + " -silent",
 			ActionID:    "nuclei",
 			Group:       "Surface",
@@ -12227,7 +12993,7 @@ func (m model) exploitFireActions() []controlAction {
 			Label:       "[WEB] Nikto Audit",
 			Description: "Run nikto web scan against current target.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc " + shellQuote("nikto -h "+targetURL),
+			Command:     "docker exec h3retik-kali bash -lc " + shellQuote("nikto -h "+targetURL),
 			KaliShell:   "nikto -h " + targetURL,
 			ActionID:    "nikto",
 			Group:       "Surface",
@@ -12236,7 +13002,7 @@ func (m model) exploitFireActions() []controlAction {
 			Label:       "[WEB] FFUF Common Paths",
 			Description: "Enumerate common web paths with ffuf.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc " + shellQuote("ffuf -u "+baseURL+"/FUZZ -w /usr/share/wordlists/dirb/common.txt -mc 200,204,301,302,307,401,403"),
+			Command:     "docker exec h3retik-kali bash -lc " + shellQuote("ffuf -u "+baseURL+"/FUZZ -w /usr/share/wordlists/dirb/common.txt -mc 200,204,301,302,307,401,403"),
 			KaliShell:   "ffuf -u " + baseURL + "/FUZZ -w /usr/share/wordlists/dirb/common.txt -mc 200,204,301,302,307,401,403",
 			ActionID:    "ffuf",
 			Group:       "Surface",
@@ -12245,7 +13011,7 @@ func (m model) exploitFireActions() []controlAction {
 			Label:       "[WEB] Gobuster Dir",
 			Description: "Enumerate directories with gobuster.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc " + shellQuote("gobuster dir -u "+baseURL+" -w /usr/share/wordlists/dirb/common.txt -q"),
+			Command:     "docker exec h3retik-kali bash -lc " + shellQuote("gobuster dir -u "+baseURL+" -w /usr/share/wordlists/dirb/common.txt -q"),
 			KaliShell:   "gobuster dir -u " + baseURL + " -w /usr/share/wordlists/dirb/common.txt -q",
 			ActionID:    "gobuster",
 			Group:       "Surface",
@@ -12279,9 +13045,9 @@ func (m model) exploitFireActions() []controlAction {
 	nmapShell += host
 	catalog = append(catalog, controlAction{
 		Label:       "[KALI] Nmap Quickscan",
-		Description: "Run quick service discovery from jsbb-kali against current target host.",
+		Description: "Run quick service discovery from h3retik-kali against current target host.",
 		Mode:        "kali",
-		Command:     "docker exec jsbb-kali bash -lc \"" + nmapShell + "\"",
+		Command:     "docker exec h3retik-kali bash -lc \"" + nmapShell + "\"",
 		KaliShell:   nmapShell,
 		ActionID:    "nmap",
 		Group:       "Recon",
@@ -12290,7 +13056,7 @@ func (m model) exploitFireActions() []controlAction {
 		Label:       "[KALI] SQLMap Crawl",
 		Description: "Run SQLMap crawl against current target URL.",
 		Mode:        "kali",
-		Command:     "docker exec jsbb-kali bash -lc \"sqlmap -u " + targetURL + " --batch --crawl=2 --risk=1 --level=1\"",
+		Command:     "docker exec h3retik-kali bash -lc \"sqlmap -u " + targetURL + " --batch --crawl=2 --risk=1 --level=1\"",
 		KaliShell:   "sqlmap -u " + targetURL + " --batch --crawl=2 --risk=1 --level=1",
 		ActionID:    "sqlmap",
 		Group:       "Exploit",
@@ -12353,7 +13119,7 @@ func (m model) exploitFireActions() []controlAction {
 			Label:       bruteRunLabel,
 			Description: bruteRunDesc,
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc " + shellQuote(m.bruteforceAdaptiveShell(bruteTarget)),
+			Command:     "docker exec h3retik-kali bash -lc " + shellQuote(m.bruteforceAdaptiveShell(bruteTarget)),
 			KaliShell:   m.bruteforceAdaptiveShell(bruteTarget),
 			ActionID:    "bruteforce-adaptive",
 			Group:       "Access",
@@ -12404,9 +13170,9 @@ func (m model) exploitFireActions() []controlAction {
 		cmd := m.commands[m.commandIdx].Command
 		catalog = append(catalog, controlAction{
 			Label:       "[REPLAY] Selected OPS Command",
-			Description: "Fire the currently selected command from OPS timeline inside jsbb-kali.",
+			Description: "Fire the currently selected command from OPS timeline inside h3retik-kali.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"" + cmd + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"" + cmd + "\"",
 			KaliShell:   cmd,
 			ActionID:    strings.ToLower(strings.TrimSpace(cmd)),
 			Group:       "Utility",
@@ -12709,42 +13475,42 @@ func (m model) osintFireActions() []controlAction {
 			Label:       "[OSINT] Full Chain",
 			Description: "Run stage chain: seed harvest -> deep automation -> recon-ng -> reNgine.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"" + fullChain + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"" + fullChain + "\"",
 			KaliShell:   fullChain,
 		},
 		{
 			Label:       "[OSINT] 1/5 Seed :: theHarvester (" + strings.ToUpper(m.selectedOsintInputType()) + ")",
 			Description: "Run theHarvester wrapper for initial seed collection.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"osint-seed-harvest " + seedQuoted + " 200\"",
+			Command:     "docker exec h3retik-kali bash -lc \"osint-seed-harvest " + seedQuoted + " 200\"",
 			KaliShell:   "osint-seed-harvest " + seedQuoted + " 200",
 		},
 		{
 			Label:       "[OSINT] 2/5 Deep (" + strings.ToUpper(deepEngine) + ")",
 			Description: "Run selected deep automation engine.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"" + deepCmdPreferred + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"" + deepCmdPreferred + "\"",
 			KaliShell:   deepCmdPreferred,
 		},
 		{
 			Label:       "[OSINT] 3/5 Recon-ng Custom Modules",
 			Description: "Execute recon-ng custom module chain against the current seed.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"osint-reconng " + reconCmdQuoted + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"osint-reconng " + reconCmdQuoted + "\"",
 			KaliShell:   "osint-reconng " + reconCmdQuoted,
 		},
 		{
 			Label:       "[OSINT] 4/5 reNgine Runtime/API Check",
 			Description: "Validate reNgine local scaffold inside Kali image.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"osint-rengine local-status\"",
+			Command:     "docker exec h3retik-kali bash -lc \"osint-rengine local-status\"",
 			KaliShell:   "osint-rengine local-status",
 		},
 		{
 			Label:       "[OSINT] Artifact Index",
 			Description: "List collected OSINT artifacts paths mapped to host volume.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"find /artifacts/osint -maxdepth 3 -type f 2>/dev/null | sort\"",
+			Command:     "docker exec h3retik-kali bash -lc \"find /artifacts/osint -maxdepth 3 -type f 2>/dev/null | sort\"",
 			KaliShell:   "find /artifacts/osint -maxdepth 3 -type f 2>/dev/null | sort",
 		},
 	}
@@ -12764,79 +13530,79 @@ func (m model) onchainFireActions() []controlAction {
 	actions := []controlAction{
 		{
 			Label:       "[ONCHAIN] Stack Check",
-			Description: "Verify onchain analyzers and wrappers are callable in jsbb-kali.",
+			Description: "Verify onchain analyzers and wrappers are callable in h3retik-kali.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"onchain-stack-check\"",
+			Command:     "docker exec h3retik-kali bash -lc \"onchain-stack-check\"",
 			KaliShell:   "onchain-stack-check",
 		},
 		{
 			Label:       "[ONCHAIN] RPC Catalog (Public + Testnet)",
 			Description: "Show built-in public RPC endpoints and chain IDs available in CTRL target mode.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"onchain-rpc-catalog\"",
+			Command:     "docker exec h3retik-kali bash -lc \"onchain-rpc-catalog\"",
 			KaliShell:   "onchain-rpc-catalog",
 		},
 		{
 			Label:       "[ONCHAIN] RPC Check (" + profile.Key + ")",
 			Description: "Validate public RPC reachability and chain ID resolution.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"onchain-rpc-check " + networkQuoted + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"onchain-rpc-check " + networkQuoted + "\"",
 			KaliShell:   "onchain-rpc-check " + networkQuoted,
 		},
 		{
 			Label:       "[ONCHAIN] Address Flow + 4D Correlation",
 			Description: "Fetch inflow/outflow signals and emit 4D correlation graph for the selected address.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"onchain-address-flow " + targetQuoted + " " + networkQuoted + " 50000\"",
+			Command:     "docker exec h3retik-kali bash -lc \"onchain-address-flow " + targetQuoted + " " + networkQuoted + " 50000\"",
 			KaliShell:   "onchain-address-flow " + targetQuoted + " " + networkQuoted + " 50000",
 		},
 		{
 			Label:       "[ONCHAIN] Slither Audit",
 			Description: "Run static analysis with Slither against the selected target/repo/path.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"onchain-slither " + targetQuoted + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"onchain-slither " + targetQuoted + "\"",
 			KaliShell:   "onchain-slither " + targetQuoted,
 		},
 		{
 			Label:       "[ONCHAIN] Mythril Scan",
 			Description: "Run symbolic analysis with Mythril against selected target.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"onchain-mythril " + targetQuoted + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"onchain-mythril " + targetQuoted + "\"",
 			KaliShell:   "onchain-mythril " + targetQuoted,
 		},
 		{
 			Label:       "[ONCHAIN] Foundry Check",
 			Description: "Run Foundry-based sanity checks in configured workspace.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"ONCHAIN_RPC_URL=" + rpcQuoted + " ONCHAIN_CHAIN_ID=" + shellQuote(chainIDText) + " onchain-foundry-check " + targetQuoted + " " + networkQuoted + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"ONCHAIN_RPC_URL=" + rpcQuoted + " ONCHAIN_CHAIN_ID=" + shellQuote(chainIDText) + " onchain-foundry-check " + targetQuoted + " " + networkQuoted + "\"",
 			KaliShell:   "ONCHAIN_RPC_URL=" + rpcQuoted + " ONCHAIN_CHAIN_ID=" + shellQuote(chainIDText) + " onchain-foundry-check " + targetQuoted + " " + networkQuoted,
 		},
 		{
 			Label:       "[ONCHAIN] Echidna Fuzz",
 			Description: "Run invariant fuzz harness with Echidna.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"onchain-echidna " + targetQuoted + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"onchain-echidna " + targetQuoted + "\"",
 			KaliShell:   "onchain-echidna " + targetQuoted,
 		},
 		{
 			Label:       "[ONCHAIN] Medusa Fuzz",
 			Description: "Run Medusa fuzzing campaign if available.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"onchain-medusa " + targetQuoted + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"onchain-medusa " + targetQuoted + "\"",
 			KaliShell:   "onchain-medusa " + targetQuoted,
 		},
 		{
 			Label:       "[ONCHAIN] Halmos Check",
 			Description: "Run Halmos symbolic test harness if available.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"onchain-halmos " + targetQuoted + "\"",
+			Command:     "docker exec h3retik-kali bash -lc \"onchain-halmos " + targetQuoted + "\"",
 			KaliShell:   "onchain-halmos " + targetQuoted,
 		},
 		{
 			Label:       "[ONCHAIN] Artifact Index",
 			Description: "List collected onchain artifacts paths.",
 			Mode:        "kali",
-			Command:     "docker exec jsbb-kali bash -lc \"find /artifacts/onchain -maxdepth 3 -type f 2>/dev/null | sort\"",
+			Command:     "docker exec h3retik-kali bash -lc \"find /artifacts/onchain -maxdepth 3 -type f 2>/dev/null | sort\"",
 			KaliShell:   "find /artifacts/onchain -maxdepth 3 -type f 2>/dev/null | sort",
 		},
 	}
@@ -12850,6 +13616,13 @@ func (m model) historyActions() []controlAction {
 			Description: "Return dashboard to live telemetry files under telemetry/.",
 			Mode:        "internal",
 			Command:     "live",
+		},
+		{
+			Label:       "Start New Campaign (Archive + Reset)",
+			Description: "Archive current telemetry/artifacts, then reset live campaign data while preserving current target scope.",
+			Mode:        "local",
+			Command:     "python3 ./scripts/telemetryctl.py new-campaign",
+			Args:        []string{"python3", "./scripts/telemetryctl.py", "new-campaign"},
 		},
 		{
 			Label:       "Snapshot Current Telemetry",

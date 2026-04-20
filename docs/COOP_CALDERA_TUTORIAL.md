@@ -6,7 +6,7 @@ This tutorial is the fast path for using h3retik co-op mode with CALDERA C2.
 
 - Authorized environment only.
 - Docker engine running.
-- `jsbb-kali` container available, or set `H3RETIK_KALI_CONTAINER` to your container name.
+- `h3retik-kali` container available, or set `H3RETIK_KALI_CONTAINER` to your container name.
 - If you use a non-default CALDERA endpoint/key, export:
   - `COOP_CALDERA_URL`
   - `COOP_CALDERA_API_KEY`
@@ -25,7 +25,7 @@ Inside TUI:
 
 Attach mode:
 
-- if `jsbb-kali` is already running, `h3retik` will reuse it automatically
+- if `h3retik-kali` is already running, `h3retik` will reuse it automatically
 - to attach to a different Kali container, export `H3RETIK_KALI_CONTAINER=<name>` and `H3RETIK_SKIP_UP=1`
 
 ## 2) Guided Setup (CTRL -> TARGET)

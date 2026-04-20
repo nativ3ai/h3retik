@@ -130,18 +130,26 @@ h3retik --kali-container my-kali tui
 h3retik --kali-image my/kali:tag up
 h3retik up                       # start/build kali service
 h3retik down                     # stop stack
+h3retik build                    # rebuild TUI binary in active h3retik root
 h3retik build-kali               # build kali image
 h3retik target ...               # scripts/targetctl.py passthrough
 h3retik pipeline ...             # scripts/security_pipeline.py passthrough
 h3retik observatory ...          # scripts/observatory_runner.py passthrough
+h3retik import-runs <path>       # import campaign telemetry into local telemetry/runs
+h3retik tools list               # list optional on-demand tools in kali
+h3retik tools install recon-plus # install optional recon tool bundle in kali
 h3retik kali "<cmd>"             # execute command in kali container
 h3retik coop <cmd>               # caldera co-op helpers (check/up/status/stop/api/report)
+h3retik update                   # pull latest repo + reinstall global launcher
 h3retik doctor                   # runtime checks
 ```
 
+- If you run the global launcher (`~/.local/bin/h3retik`), `h3retik build` rebuilds the TUI in the active installed root (`~/.local/share/h3retik/<version>`).
+- Use `h3retik update` to pull latest upstream changes and refresh the installed runtime.
+
 ## Existing Kali / External Runtime
 
-h3retik can run only the TUI against an already-running container. If `jsbb-kali` already exists, `h3retik` will reuse it automatically; otherwise set the container name explicitly.
+h3retik can run only the TUI against an already-running container. If `h3retik-kali` already exists, `h3retik` will reuse it automatically; otherwise set the container name explicitly.
 
 ```bash
 export H3RETIK_KALI_CONTAINER=<your-kali-container>
@@ -155,7 +163,7 @@ Or with one command:
 h3retik --kali-container <your-kali-container> attach
 ```
 
-For the default container name, no extra flag is needed if `jsbb-kali` is already running:
+For the default container name, no extra flag is needed if `h3retik-kali` is already running:
 
 ```bash
 h3retik
@@ -192,7 +200,7 @@ If you want full feature parity, use `h3retik up` with the default bundled Kali 
 ## Runtime + Suite
 
 - Kali image: `h3retik/kali:v0.0.3`
-- Compose service: `kali` (`${H3RETIK_KALI_CONTAINER:-jsbb-kali}`)
+- Compose service: `kali` (`${H3RETIK_KALI_CONTAINER:-h3retik-kali}`)
 - Mounted volumes:
   - `./telemetry -> /telemetry`
   - `./artifacts -> /artifacts`

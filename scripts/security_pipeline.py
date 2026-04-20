@@ -24,7 +24,7 @@ COMMANDS_PATH = TELEMETRY / "commands.jsonl"
 FINDINGS_PATH = TELEMETRY / "findings.jsonl"
 LOOT_PATH = TELEMETRY / "loot.jsonl"
 EXPLOITS_PATH = TELEMETRY / "exploits.jsonl"
-KALI_CONTAINER = "jsbb-kali"
+KALI_CONTAINER = "h3retik-kali"
 
 
 def now() -> str:

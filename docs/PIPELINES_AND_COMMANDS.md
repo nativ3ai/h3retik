@@ -15,6 +15,7 @@ This document explains all operator command surfaces: `h3retik` CLI, TUI `CTRL` 
 - `h3retik target <args...>` — passthrough to `scripts/targetctl.py`
 - `h3retik pipeline <args...>` — passthrough to `scripts/security_pipeline.py`
 - `h3retik observatory <args...>` — passthrough to `scripts/observatory_runner.py`
+- `python3 ./scripts/telemetryctl.py new-campaign` — archive current run then reset live telemetry/artifacts while keeping active target scope
 - `h3retik reset` — reset telemetry/custom target
 - `h3retik doctor` — runtime checks
 - `h3retik install` — global launcher install
@@ -215,4 +216,3 @@ h3retik coop api /api/operations GET
 - Prefer pipeline/module actions to keep telemetry normalized.
 - Use manual/custom commands when hypothesis-specific commands are needed.
 - Treat write/tamper follow-ups as explicit operator decisions (high trace).
-

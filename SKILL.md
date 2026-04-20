@@ -35,7 +35,7 @@ If you cannot locate files, ask the operator for the repo path or a copy/paste o
 - Root launcher: `h3retik`
 - Compose service: `kali`
 - Kali image tag: `h3retik/kali:v0.0.3`
-- Kali container name (default): `jsbb-kali` (`H3RETIK_KALI_CONTAINER` override)
+- Kali container name (default): `h3retik-kali` (`H3RETIK_KALI_CONTAINER` override)
 - Telemetry bus: `telemetry/` (append-only JSONL streams)
 - Artifacts store: `artifacts/` (files referenced by loot/evidence)
 
@@ -60,7 +60,7 @@ Existing compatible Kali container:
 
 - `H3RETIK_KALI_CONTAINER=<name> H3RETIK_SKIP_UP=1 h3retik tui`
 - `h3retik --kali-container <name> attach` (equivalent one-shot attach)
-- If `jsbb-kali` already exists and is running, plain `h3retik` will attach to it automatically.
+- If `h3retik-kali` already exists and is running, plain `h3retik` will attach to it automatically.
 - Compose image can be swapped per command: `h3retik --kali-image <tag> up`.
 
 Headless (non-interactive) alternative:
@@ -151,6 +151,6 @@ Avoid:
 
 ## Notes
 
-- Pipelines should be target-agnostic: treat Juice Shop as a demo target, not a logic dependency.
+- Pipelines should be target-agnostic: treat any lab target as a demo target, never as a logic dependency.
 - Prefer module/pipeline execution before ad-hoc one-off commands so telemetry stays consistent.
 - Noisy actions (bruteforce, tamper/write, destructive edits) should be treated as explicit operator decisions with OPSEC awareness and evidence logging.

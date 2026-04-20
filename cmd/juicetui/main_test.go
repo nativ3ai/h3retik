@@ -30,7 +30,7 @@ func TestPersistModuleResultWritesArtifactLootAndFinding(t *testing.T) {
 	root := t.TempDir()
 	action := controlAction{
 		Label:    "[MODULE] Nuclei Focused Sweep",
-		Command:  "docker exec jsbb-kali bash -lc 'nuclei -u http://target.example -silent'",
+		Command:  "docker exec h3retik-kali bash -lc 'nuclei -u http://target.example -silent'",
 		ModuleID: "exploit-nuclei-focused",
 		Evidence: attackModuleEvidence{
 			LootKind:        "artifact",
@@ -82,7 +82,7 @@ func TestPersistModuleResultLootOnlyWhenNoFindingTitle(t *testing.T) {
 	root := t.TempDir()
 	action := controlAction{
 		Label:    "[MODULE] HTTPX Probe",
-		Command:  "docker exec jsbb-kali bash -lc 'httpx -u http://target.example'",
+		Command:  "docker exec h3retik-kali bash -lc 'httpx -u http://target.example'",
 		ModuleID: "recon-httpx",
 		Evidence: attackModuleEvidence{
 			LootKind: "artifact",
@@ -546,7 +546,7 @@ func TestLootResultMsgAppliesCredentialFitSignals(t *testing.T) {
 
 	updated, _ := m.Update(lootResultMsg{
 		Label:   "Loot Action :: credential fit sweep",
-		Command: "docker exec jsbb-kali bash -lc ...",
+		Command: "docker exec h3retik-kali bash -lc ...",
 		Output:  "CRED_FIT endpoint=http://credential-fit.example/api/login baseline=401 bearer=200",
 	})
 	next, ok := updated.(model)

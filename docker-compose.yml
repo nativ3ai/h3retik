@@ -4,23 +4,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.kali
-    container_name: ${H3RETIK_KALI_CONTAINER:-jsbb-kali}
+    container_name: ${H3RETIK_KALI_CONTAINER:-h3retik-kali}
     privileged: true
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
     command: ["/bin/bash", "-lc", "sleep infinity"]
     networks:
-      - blackbox-lab
-      - juiceshop-blackbox
+      - h3retik-lab
     volumes:
       - ./telemetry:/telemetry
       - ./artifacts:/artifacts
 
 networks:
-  blackbox-lab:
-    external: true
-    name: blackbox-lab
-  juiceshop-blackbox:
-    external: true
-    name: juiceshop-blackbox
+  h3retik-lab:
+    name: h3retik-lab

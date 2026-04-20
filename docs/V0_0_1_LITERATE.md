@@ -24,7 +24,7 @@ export H3RETIK_SKIP_UP=1
 h3retik tui
 ```
 
-If `jsbb-kali` is already running, the launcher will attach to it automatically when you run `h3retik`.
+If `h3retik-kali` is already running, the launcher will attach to it automatically when you run `h3retik`.
 
 ## 2) Preconfigured Kali runtime
 
