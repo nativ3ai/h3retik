@@ -1,4 +1,4 @@
-# h3retik v0.0.3
+# h3retik v0.0.4
 
 SOTA red teaming operations cockpit: headless Kali execution, gamified operator UX, and evidence-first telemetry.
 
@@ -76,8 +76,13 @@ Notes:
 | `python3` | `target`/`pipeline`/`observatory` helpers | Yes |
 | `go` | local build of `juicetui` (`h3retik build`) | Recommended |
 
+Go clarity:
+- If `bin/juicetui` is already present (prebuilt), H3RETIK can run without Go.
+- If no prebuilt binary is present, Go becomes required to compile the TUI.
+- `h3retik setup` explains this path and can attempt dependency install.
+
 Runtime footprint:
-- Current Kali image size on disk: ~`17–18GB` (`h3retik/kali:v0.0.3`).
+- Current Kali image size on disk: ~`17–18GB` (`h3retik/kali:v0.0.4`).
 - Recommended free disk for first install/build + artifacts: `30GB+` (better: `40GB`).
 - Recommended memory: `8GB+` (`16GB` preferred for heavy scan/fuzz workloads).
 
@@ -102,6 +107,7 @@ What the all-in-one installer does:
 - Creates writable runtime dirs: `telemetry/`, `artifacts/`, `bin/`.
 - Builds `bin/juicetui` if `go` is installed (otherwise build happens later when available).
 - Does not auto-start containers; runtime comes up with `h3retik up` or first `h3retik`.
+- On first `h3retik` launch, opens a guided setup wizard (`h3retik setup`) to configure runtime mode, deps, and optional bundles.
 
 After install:
 
@@ -125,6 +131,7 @@ ln -sf "$(pwd)/SKILL.md" ~/.codex/skills/h3retik/SKILL.md
 
 ```bash
 h3retik                          # start kali + launch TUI
+h3retik setup                    # guided first-run setup (runtime mode, deps, optional bundles)
 h3retik attach                   # attach TUI to existing running kali container (no compose up)
 h3retik --kali-container my-kali tui
 h3retik --kali-image my/kali:tag up
@@ -138,6 +145,10 @@ h3retik observatory ...          # scripts/observatory_runner.py passthrough
 h3retik import-runs <path>       # import campaign telemetry into local telemetry/runs
 h3retik tools list               # list optional on-demand tools in kali
 h3retik tools install recon-plus # install optional recon tool bundle in kali
+h3retik tools install web-adv-plus
+h3retik tools install ad-plus
+h3retik tools install k8s-plus
+h3retik tools install crack-plus
 h3retik kali "<cmd>"             # execute command in kali container
 h3retik coop <cmd>               # caldera co-op helpers (check/up/status/stop/api/report)
 h3retik update                   # pull latest repo + reinstall global launcher
@@ -146,6 +157,8 @@ h3retik doctor                   # runtime checks
 
 - If you run the global launcher (`~/.local/bin/h3retik`), `h3retik build` rebuilds the TUI in the active installed root (`~/.local/share/h3retik/<version>`).
 - Use `h3retik update` to pull latest upstream changes and refresh the installed runtime.
+- To bypass first-run setup in automation, set `H3RETIK_NO_SETUP_WIZARD=1`.
+- Setup state/config is persisted in `~/.config/h3retik` (override with `H3RETIK_CONFIG_DIR`).
 
 ## Existing Kali / External Runtime
 
@@ -199,7 +212,7 @@ If you want full feature parity, use `h3retik up` with the default bundled Kali 
 
 ## Runtime + Suite
 
-- Kali image: `h3retik/kali:v0.0.3`
+- Kali image: `h3retik/kali:v0.0.4`
 - Compose service: `kali` (`${H3RETIK_KALI_CONTAINER:-h3retik-kali}`)
 - Mounted volumes:
   - `./telemetry -> /telemetry`
@@ -266,7 +279,7 @@ This keeps TUI state and headless execution synchronized, replayable, and export
 
 ## Operational Model (h3retik vs typical red-team TUI)
 
-| Dimension | Typical toolchains | h3retik v0.0.3 |
+| Dimension | Typical toolchains | h3retik v0.0.4 |
 |---|---|---|
 | Execution model | Mixed terminals and ad hoc scripts | Unified headless CLI bus (`kali` + `local`) |
 | Evidence model | Scattered outputs | Structured telemetry (`commands/findings/loot/exploits`) |
@@ -300,6 +313,6 @@ h3retik
 
 ## Security Reporting
 
-- Supported release line: `v0.0.3` (latest tagged release on `main`).
+- Supported release line: `v0.0.4` (latest tagged release on `main`).
 - Report vulnerabilities privately through GitHub Security Advisories (preferred) or direct maintainer contact.
 - Do not publish exploitable details in public issues before coordinated disclosure.

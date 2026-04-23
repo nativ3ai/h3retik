@@ -166,7 +166,7 @@ Scope affects:
   - CVE task set/start/info
   - inner endpoint next/prev/manual/apply/clear
 - `FIRE`
-  - grouped lanes (`Recon`, `Surface`, `Exploit`, `Access`, `Privilege`, `Objective`, `Utility`, `Modules`, `Custom`)
+  - grouped lanes (`Recon`, `Surface`, `Web-Adv`, `Exploit`, `Access`, `AD`, `K8S`, `Crack`, `Privilege`, `Objective`, `Utility`, `Modules`, `Custom`)
   - brute/auth settings and adaptive brute execution
   - pipeline execution and group-based pipeline selection
   - module configure/execute

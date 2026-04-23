@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+import base64
+import json
+import sys
+
+
+def _decode(segment: str) -> bytes:
+    segment += "=" * ((4 - (len(segment) % 4)) % 4)
+    return base64.urlsafe_b64decode(segment.encode())
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("usage: jwt-tool <token>")
+        return 2
+    token = sys.argv[1].strip()
+    parts = token.split(".")
+    if len(parts) < 2:
+        print("invalid JWT: expected header.payload")
+        return 1
+    try:
+        header = json.loads(_decode(parts[0]).decode(errors="replace"))
+        payload = json.loads(_decode(parts[1]).decode(errors="replace"))
+    except Exception as exc:
+        print(f"decode error: {exc}")
+        return 1
+    print("[jwt-tool] decoded header")
+    print(json.dumps(header, indent=2, ensure_ascii=False))
+    print("[jwt-tool] decoded payload")
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

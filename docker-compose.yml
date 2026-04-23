@@ -1,6 +1,6 @@
 services:
   kali:
-    image: ${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.3}
+    image: ${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.4}
     build:
       context: .
       dockerfile: Dockerfile.kali

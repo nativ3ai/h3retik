@@ -67,8 +67,12 @@ Primary exploit FIRE groups:
 
 - `Recon`
 - `Surface`
+- `Web-Adv`
 - `Exploit`
 - `Access`
+- `AD`
+- `K8S`
+- `Crack`
 - `Privilege`
 - `Objective`
 - `Utility`
@@ -160,6 +164,27 @@ Each enabled module provides:
   - `{{input:<key>}}`
 - typed inputs (`text`, `bool`, `int`, `select`) with validation
 - readiness requirements and evidence hints
+
+New lane-ready module groups:
+
+- `Web-Adv`: crawling, historical endpoints, reflected/XSS checks, JWT analysis
+- `AD`: kerberos user enum, LDAP collection, AD CS checks, WinRM validation
+- `K8S`: remote cluster probe, Kubernetes posture scans
+- `Crack`: offline hash cracking workflows
+
+New dynamic requirements used by modules:
+
+- `loot-hash`
+- `loot-credential`
+- `loot-token`
+- `loot-endpoint`
+
+Install optional lane tools as needed:
+
+- `h3retik tools install web-adv-plus`
+- `h3retik tools install ad-plus`
+- `h3retik tools install k8s-plus`
+- `h3retik tools install crack-plus`
 
 ## 9) Follow-up Mechanics (LOOT)
 

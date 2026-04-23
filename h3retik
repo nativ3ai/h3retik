@@ -2,9 +2,21 @@
 set -euo pipefail
 
 ROOT="${H3RETIK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo "0.0.3")"
+VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo "0.0.4")"
+CONFIG_DIR="${H3RETIK_CONFIG_DIR:-$HOME/.config/h3retik}"
+CONFIG_FILE="$CONFIG_DIR/setup.env"
+SETUP_MARKER="$CONFIG_DIR/setup.complete"
+mkdir -p "$CONFIG_DIR"
+if [[ -d "$ROOT/.h3retik" ]]; then
+  [[ -f "$ROOT/.h3retik/setup.env" && ! -f "$CONFIG_FILE" ]] && cp "$ROOT/.h3retik/setup.env" "$CONFIG_FILE" || true
+  [[ -f "$ROOT/.h3retik/setup.complete" && ! -f "$SETUP_MARKER" ]] && cp "$ROOT/.h3retik/setup.complete" "$SETUP_MARKER" || true
+fi
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+fi
 KALI_CONTAINER="${H3RETIK_KALI_CONTAINER:-h3retik-kali}"
-KALI_IMAGE="${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.3}"
+KALI_IMAGE="${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.4}"
 export H3RETIK_KALI_CONTAINER="$KALI_CONTAINER"
 export H3RETIK_KALI_IMAGE="$KALI_IMAGE"
 
@@ -29,8 +41,23 @@ ensure_tui() {
   build_tui
 }
 
+has_existing_runtime_state() {
+  if [[ -x "$ROOT/bin/juicetui" ]]; then
+    return 0
+  fi
+  if docker inspect "$KALI_CONTAINER" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -s "$ROOT/telemetry/commands.jsonl" || -s "$ROOT/telemetry/findings.jsonl" || -s "$ROOT/telemetry/loot.jsonl" ]]; then
+    return 0
+  fi
+  return 1
+}
+
 build_tui() {
-  command -v go >/dev/null 2>&1 || die "go is required to build juicetui"
+  if ! command -v go >/dev/null 2>&1; then
+    die "go is required to build juicetui (no prebuilt bin/juicetui found). Run 'h3retik setup' to install deps or install Go manually."
+  fi
   run_root go build -o bin/juicetui ./cmd/juicetui
 }
 
@@ -70,6 +97,7 @@ Usage:
   h3retik import-runs <path> [--all] # import saved campaigns into local telemetry/runs
   h3retik tools list               # show optional tool bundles + installed status (inside kali)
   h3retik tools install <bundle|tool1,tool2,...> # install optional tools in kali on demand
+  h3retik setup                    # guided first-run setup wizard
   h3retik reset                    # reset telemetry + custom target
   h3retik doctor                   # quick environment + runtime checks
   h3retik update                   # pull latest h3retik from GitHub and reinstall globally
@@ -79,7 +107,7 @@ Usage:
 
 Env overrides:
   H3RETIK_KALI_CONTAINER           # default: h3retik-kali
-  H3RETIK_KALI_IMAGE               # default: h3retik/kali:v0.0.3 (compose mode)
+  H3RETIK_KALI_IMAGE               # default: h3retik/kali:v0.0.4 (compose mode)
   H3RETIK_SKIP_UP=1                # skip docker compose up (attach to existing container)
 EOF
 }
@@ -121,8 +149,18 @@ done
 
 cmd="${1:-tui}"
 case "$cmd" in
+  setup)
+    shift || true
+    exec "$ROOT/scripts/setup_wizard.sh" "$@"
+    ;;
   tui)
     shift || true
+    if [[ ! -f "$SETUP_MARKER" ]] && has_existing_runtime_state; then
+      touch "$SETUP_MARKER"
+    fi
+    if [[ "${H3RETIK_NO_SETUP_WIZARD:-0}" != "1" && ! -f "$SETUP_MARKER" ]]; then
+      exec "$ROOT/scripts/setup_wizard.sh"
+    fi
     ensure_deps
     ensure_tui
     if [[ "${H3RETIK_SKIP_UP:-0}" != "1" ]]; then
@@ -232,9 +270,25 @@ case "$cmd" in
         exec docker exec "$KALI_CONTAINER" bash -lc '
 set -e
 echo "[bundle] recon-plus: masscan,rustscan,naabu,zmap,nbtscan,subfinder"
-for t in masscan rustscan naabu zmap nbtscan subfinder; do
-  if command -v "$t" >/dev/null 2>&1; then
-    echo "  [ok] $t -> $(command -v "$t")"
+echo "[bundle] web-adv-plus: httpx-toolkit,katana,gau,waybackurls,dalfox,kxss,jwt-tool"
+echo "[bundle] ad-plus: kerbrute,ldapdomaindump,certipy,evil-winrm"
+echo "[bundle] k8s-plus: trivy,kubescape,kube-hunter"
+echo "[bundle] crack-plus: hashcat,john"
+for t in masscan rustscan naabu zmap nbtscan subfinder httpx-toolkit katana gau waybackurls dalfox kxss jwt-tool kerbrute ldapdomaindump certipy evil-winrm trivy kubescape kube-hunter hashcat john; do
+  lookup="$t"
+  if [ "$t" = "certipy" ] && ! command -v certipy >/dev/null 2>&1; then
+    lookup="certipy-ad"
+  fi
+  if command -v "$lookup" >/dev/null 2>&1; then
+    if [ "$t" = "certipy" ]; then
+      echo "  [ok] certipy -> $(command -v "$lookup")"
+    else
+      echo "  [ok] $t -> $(command -v "$lookup")"
+    fi
+  elif [ "$t" = "rustscan" ] && [ -x /root/.cargo/bin/rustscan ]; then
+    echo "  [ok] rustscan -> /root/.cargo/bin/rustscan"
+  elif [ "$t" = "jwt-tool" ] && [ -x /usr/local/bin/jwt-tool ]; then
+    echo "  [ok] jwt-tool -> /usr/local/bin/jwt-tool"
   else
     echo "  [missing] $t"
   fi
@@ -249,23 +303,128 @@ set -e
 spec='$spec'
 if [ \"\$spec\" = \"recon-plus\" ]; then
   tools='masscan rustscan naabu zmap nbtscan subfinder'
+elif [ \"\$spec\" = \"web-adv-plus\" ]; then
+  tools='httpx-toolkit katana gau waybackurls dalfox kxss jwt-tool'
+elif [ \"\$spec\" = \"ad-plus\" ]; then
+  tools='kerbrute ldapdomaindump certipy evil-winrm'
+elif [ \"\$spec\" = \"k8s-plus\" ]; then
+  tools='trivy kubescape kube-hunter'
+elif [ \"\$spec\" = \"crack-plus\" ]; then
+  tools='hashcat john'
 else
   tools=\$(echo \"\$spec\" | tr ',' ' ')
 fi
 apt-get update >/dev/null
 for t in \$tools; do
   case \"\$t\" in
-    masscan|rustscan|zmap|nbtscan)
+    masscan|zmap|nbtscan|hashcat|john|ldapdomaindump|evil-winrm)
       apt-get install -y --no-install-recommends \"\$t\" >/dev/null || echo \"[warn] apt install failed for \$t\"
+      ;;
+    rustscan)
+      apt-get install -y --no-install-recommends rustscan >/dev/null || true
+      if ! command -v rustscan >/dev/null 2>&1; then
+        apt-get install -y --no-install-recommends cargo >/dev/null || true
+        cargo install rustscan --locked >/dev/null 2>&1 || echo \"[warn] cargo install failed for rustscan\"
+        [ -x /root/.cargo/bin/rustscan ] && ln -sf /root/.cargo/bin/rustscan /usr/local/bin/rustscan || true
+      fi
       ;;
     naabu)
       if ! command -v naabu >/dev/null 2>&1; then
+        apt-get install -y --no-install-recommends libpcap-dev >/dev/null || true
         GOBIN=/usr/local/bin go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest || echo \"[warn] go install failed for naabu\"
+      fi
+      ;;
+    httpx-toolkit)
+      if ! command -v httpx-toolkit >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/projectdiscovery/httpx/cmd/httpx@latest || echo \"[warn] go install failed for httpx-toolkit\"
+        [ -x /usr/local/bin/httpx ] && ln -sf /usr/local/bin/httpx /usr/local/bin/httpx-toolkit || true
       fi
       ;;
     subfinder)
       if ! command -v subfinder >/dev/null 2>&1; then
         GOBIN=/usr/local/bin go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest || echo \"[warn] go install failed for subfinder\"
+      fi
+      ;;
+    katana)
+      if ! command -v katana >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/projectdiscovery/katana/cmd/katana@latest || echo \"[warn] go install failed for katana\"
+      fi
+      ;;
+    gau)
+      if ! command -v gau >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/lc/gau/v2/cmd/gau@latest || echo \"[warn] go install failed for gau\"
+      fi
+      ;;
+    waybackurls)
+      if ! command -v waybackurls >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/tomnomnom/waybackurls@latest || echo \"[warn] go install failed for waybackurls\"
+      fi
+      ;;
+    dalfox)
+      if ! command -v dalfox >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/hahwul/dalfox/v2@latest || echo \"[warn] go install failed for dalfox\"
+      fi
+      ;;
+    kxss)
+      if ! command -v kxss >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/Emoe/kxss@latest || echo \"[warn] go install failed for kxss\"
+      fi
+      ;;
+    jwt-tool)
+      if [ ! -x /usr/local/bin/jwt-tool ]; then
+        cat >/usr/local/bin/jwt-tool <<'EOF'
+#!/usr/bin/env python3
+import base64, json, sys
+if len(sys.argv) < 2:
+    print(\"usage: jwt-tool <token>\")
+    sys.exit(2)
+token = sys.argv[1].strip()
+parts = token.split(\".\")
+if len(parts) < 2:
+    print(\"invalid JWT: expected header.payload\")
+    sys.exit(1)
+def dec(seg):
+    seg += \"=\" * ((4 - (len(seg) % 4)) % 4)
+    return base64.urlsafe_b64decode(seg.encode())
+try:
+    header = json.loads(dec(parts[0]).decode(errors=\"replace\"))
+    payload = json.loads(dec(parts[1]).decode(errors=\"replace\"))
+except Exception as exc:
+    print(f\"decode error: {exc}\")
+    sys.exit(1)
+print(\"[jwt-tool] decoded header\")
+print(json.dumps(header, indent=2, ensure_ascii=False))
+print(\"[jwt-tool] decoded payload\")
+print(json.dumps(payload, indent=2, ensure_ascii=False))
+sys.exit(0)
+EOF
+        chmod +x /usr/local/bin/jwt-tool
+      fi
+      ;;
+    kerbrute)
+      if ! command -v kerbrute >/dev/null 2>&1; then
+        GOBIN=/usr/local/bin go install github.com/ropnop/kerbrute@latest || echo \"[warn] go install failed for kerbrute\"
+      fi
+      ;;
+    certipy)
+      if ! command -v certipy >/dev/null 2>&1 && ! command -v certipy-ad >/dev/null 2>&1; then
+        apt-get install -y --no-install-recommends certipy >/dev/null || true
+        command -v certipy >/dev/null 2>&1 || python3 -m pip install --break-system-packages certipy-ad >/dev/null 2>&1 || echo \"[warn] certipy install failed\"
+      fi
+      command -v certipy >/dev/null 2>&1 || command -v certipy-ad >/dev/null 2>&1 && ln -sf \"\$(command -v certipy-ad)\" /usr/local/bin/certipy || true
+      ;;
+    trivy)
+      apt-get install -y --no-install-recommends trivy >/dev/null || echo \"[warn] apt install failed for trivy\"
+      ;;
+    kubescape)
+      if ! command -v kubescape >/dev/null 2>&1; then
+        curl -sSfL https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash >/dev/null 2>&1 || echo \"[warn] kubescape install failed\"
+        command -v kubescape >/dev/null 2>&1 || install -m 0755 /root/.kubescape/bin/kubescape /usr/local/bin/kubescape >/dev/null 2>&1 || true
+      fi
+      ;;
+    kube-hunter)
+      if ! command -v kube-hunter >/dev/null 2>&1; then
+        python3 -m pip install --break-system-packages kube-hunter >/dev/null 2>&1 || echo \"[warn] pip install failed for kube-hunter\"
       fi
       ;;
     *)
@@ -275,8 +434,20 @@ for t in \$tools; do
 done
 echo '[tools] post-install status'
 for t in \$tools; do
-  if command -v \"\$t\" >/dev/null 2>&1; then
-    echo \"  [ok] \$t -> \$(command -v \"\$t\")\"
+  lookup=\"\$t\"
+  if [ \"\$t\" = \"certipy\" ] && ! command -v certipy >/dev/null 2>&1; then
+    lookup=\"certipy-ad\"
+  fi
+  if command -v \"\$lookup\" >/dev/null 2>&1; then
+    if [ \"\$t\" = \"certipy\" ]; then
+      echo \"  [ok] certipy -> \$(command -v \"\$lookup\")\"
+    else
+      echo \"  [ok] \$t -> \$(command -v \"\$lookup\")\"
+    fi
+  elif [ \"\$t\" = \"rustscan\" ] && [ -x /root/.cargo/bin/rustscan ]; then
+    echo \"  [ok] rustscan -> /root/.cargo/bin/rustscan\"
+  elif [ \"\$t\" = \"jwt-tool\" ] && [ -x /usr/local/bin/jwt-tool ]; then
+    echo \"  [ok] jwt-tool -> /usr/local/bin/jwt-tool\"
   else
     echo \"  [missing] \$t\"
   fi

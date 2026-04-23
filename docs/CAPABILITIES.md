@@ -16,10 +16,20 @@ This matrix documents the mounted suite and how each class is exposed in h3retik
 | Category | Representative tools |
 |---|---|
 | Recon / surface | `nmap`, `httpx`, `ffuf`, `gobuster`, `nikto`, `whatweb` |
+| Web advanced | `katana`, `gau`, `waybackurls`, `dalfox`, `kxss`, `jwt-tool` |
 | Vulnerability sweep | `nuclei`, `sqlmap`, `commix`, `xsser` |
 | Access / auth pressure | `hydra`, `medusa`, `john`, `hashcat` |
+| AD operations | `kerbrute`, `ldapdomaindump`, `certipy`, `evil-winrm` |
+| Kubernetes surface | `kube-hunter`, `trivy`, `kubescape` |
 | Frameworks | `metasploit-framework`, `searchsploit` |
 | Post-enum / pivot | `enum4linux-ng`, `smbclient`, `smbmap`, `ldapsearch`, `snmpwalk`, `netexec` |
+
+Optional tool bundles installable from CLI:
+
+- `h3retik tools install web-adv-plus`
+- `h3retik tools install ad-plus`
+- `h3retik tools install k8s-plus`
+- `h3retik tools install crack-plus`
 
 ## OSINT Suite
 

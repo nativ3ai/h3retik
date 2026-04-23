@@ -18,6 +18,13 @@ Behavior in TUI:
 - Actions requiring missing Kali tools are filtered/locked and not shown as runnable.
 - Runtime container/image can be switched in `CTRL -> TARGET` without restarting the TUI process.
 
+Optional lane bundles (install on demand):
+
+- `h3retik tools install web-adv-plus` -> `katana,gau,waybackurls,dalfox,kxss,jwt-tool`
+- `h3retik tools install ad-plus` -> `kerbrute,ldapdomaindump,certipy,evil-winrm`
+- `h3retik tools install k8s-plus` -> `trivy,kubescape,kube-hunter`
+- `h3retik tools install crack-plus` -> `hashcat,john`
+
 ## 1) Runtime and Build Tooling
 
 | Tool | Purpose |

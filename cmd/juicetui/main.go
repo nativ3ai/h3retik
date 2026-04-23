@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	telemetrypkg "blackbox-observatory/internal/telemetry"
+
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -40,22 +42,27 @@ type keyMap struct {
 	Replay      key.Binding
 	Fire        key.Binding
 	RawToggle   key.Binding
+	DensityMode key.Binding
 	ModeToggle  key.Binding
 	ChainToggle key.Binding
 	CoopToggle  key.Binding
 	MapToggle   key.Binding
 	Refresh     key.Binding
+	Pin         key.Binding
+	Note        key.Binding
+	Jump        key.Binding
+	Unsafe      key.Binding
 	Quit        key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.NextPane, k.PrevPane, k.Select, k.Fire, k.Replay, k.RawToggle, k.ModeToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.NextPane, k.PrevPane, k.Select, k.Fire, k.Replay, k.RawToggle, k.DensityMode, k.ModeToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Pin, k.Note, k.Jump, k.Unsafe, k.Refresh, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Left, k.Right, k.NextPane, k.PrevPane},
-		{k.NextOption, k.PrevOption, k.Select, k.Fire, k.ScrollUp, k.ScrollDown, k.Replay, k.RawToggle, k.ModeToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Refresh, k.Quit},
+		{k.NextOption, k.PrevOption, k.Select, k.Fire, k.ScrollUp, k.ScrollDown, k.Replay, k.RawToggle, k.DensityMode, k.ModeToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Pin, k.Note, k.Jump, k.Unsafe, k.Refresh, k.Quit},
 	}
 }
 
@@ -337,6 +344,13 @@ type exploitAchievement struct {
 	Unlocked bool
 }
 
+type missionQuest struct {
+	Name     string
+	Step     string
+	Unlocked bool
+	Hint     string
+}
+
 type exploitCampaignRating struct {
 	OpsecScore      int
 	PwnedScore      int
@@ -422,6 +436,7 @@ type model struct {
 	root                    string
 	telemetryDir            string
 	state                   stateFile
+	runState                telemetrypkg.RunState
 	rawCommands             []commandEntry
 	commands                []commandEntry
 	findings                []findingEntry
@@ -447,6 +462,7 @@ type model struct {
 	findingDetailScroll     int
 	lootDetailScroll        int
 	lootRawMode             bool
+	detailDeepMode          bool
 	lootOSINTMode           bool
 	lootOnchainMode         bool
 	lootFogMode             bool
@@ -472,6 +488,11 @@ type model struct {
 	controlOutcome          string
 	controlUntil            time.Time
 	controlPreflightWarning string
+	controlPreviewArmed     bool
+	controlPreviewKey       string
+	controlPreviewText      string
+	controlAfterActionCard  string
+	unsafeMode              bool
 	controlLastLabel        string
 	controlLastCommand      string
 	controlOutput           string
@@ -557,6 +578,8 @@ type model struct {
 	startupBrowseStatus     string
 	startupBusy             bool
 	confirmNewCampaign      bool
+	operatorPins            map[string]string
+	operatorNotes           []string
 }
 
 func initialModel(root string) model {
@@ -588,10 +611,15 @@ func initialModel(root string) model {
 			Replay:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "replay event")),
 			Fire:        key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fire action")),
 			RawToggle:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "loot raw")),
+			DensityMode: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "compact/deep")),
 			ModeToggle:  key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "mode/scope")),
 			ChainToggle: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "onchain")),
 			CoopToggle:  key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "co-op")),
 			MapToggle:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "arch map")),
+			Pin:         key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "pin item")),
+			Note:        key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "add note")),
+			Jump:        key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "jump arch")),
+			Unsafe:      key.NewBinding(key.WithKeys("U"), key.WithHelp("U", "unsafe on/off")),
 			Refresh:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 			Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		},
@@ -636,6 +664,8 @@ func initialModel(root string) model {
 		startupBrowseIdx:        0,
 		startupBrowseMode:       "load",
 		startupBrowseStatus:     "",
+		operatorPins:            map[string]string{},
+		operatorNotes:           []string{},
 	}
 }
 
@@ -980,6 +1010,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.controlLastLabel = msg.Label
 		m.controlLastCommand = msg.Command
 		m.controlOutput = sanitizeTerminalOutput(strings.TrimSpace(msg.Output))
+		m.controlPreviewArmed = false
+		m.controlPreviewKey = ""
+		m.controlAfterActionCard = m.renderAfterActionCard(msg)
 		if msg.Err != nil {
 			m.controlStatus = "failed :: " + msg.Err.Error()
 			m.controlOutcome = "failed"
@@ -1109,6 +1142,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.archGraphStatus = "edit payload canceled"
 				} else if strings.EqualFold(m.manualTargetKind, "arch-edit-field-value") {
 					m.archGraphStatus = "field value edit canceled"
+				} else if strings.EqualFold(m.manualTargetKind, "operator-note") {
+					m.controlStatus = "operator note canceled"
 				} else {
 					m.controlStatus = "manual target input canceled"
 				}
@@ -1161,6 +1196,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if strings.EqualFold(m.manualTargetKind, "arch-edit-field-value") {
 					return m, m.submitManualArchEditFieldValue()
+				}
+				if strings.EqualFold(m.manualTargetKind, "operator-note") {
+					return m, m.submitManualOperatorNote()
 				}
 				return m, m.submitManualTarget()
 			case "backspace", "ctrl+h":
@@ -1410,6 +1448,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.archOutputRaw = !m.archOutputRaw
 				m.commandDetailScroll = 0
 			}
+		case key.Matches(msg, m.keys.DensityMode):
+			if m.tab == 2 || m.tab == 3 {
+				m.detailDeepMode = !m.detailDeepMode
+				mode := ternary(m.detailDeepMode, "DEEP", "COMPACT")
+				if m.tab == 2 {
+					m.pwnedFireStatus = "ok :: detail mode -> " + mode
+					m.findingDetailScroll = 0
+				} else {
+					m.lootFireStatus = "ok :: detail mode -> " + mode
+					m.lootDetailScroll = 0
+				}
+			}
+		case msg.String() == "P":
+			m.pinCurrentSelection()
+		case msg.String() == "N":
+			m.startOperatorNoteInput()
+		case msg.String() == "b" || msg.String() == "B":
+			m.handoffToArchMap()
+		case msg.String() == "U":
+			m.unsafeMode = !m.unsafeMode
+			m.controlStatus = "guardrail unsafe mode :: " + ternary(m.unsafeMode, "ON", "OFF")
+			m.controlOutcome = "idle"
+			m.controlUntil = time.Now().Add(1800 * time.Millisecond)
 		}
 	}
 	return m, nil
@@ -1585,7 +1646,28 @@ func (m model) exploitGraphNodes() []attackGraphNode {
 	exploitCommands := commandsByMode(m.commands, "exploit")
 	exploitFindings := findingsByMode(m.findings, "exploit")
 	exploitLoot := lootByMode(m.loot, "exploit")
-	return buildExploitAttackGraph(m.state, exploitCommands, exploitFindings, exploitLoot)
+	nodes := buildExploitAttackGraph(m.state, exploitCommands, exploitFindings, exploitLoot)
+	if len(nodes) == 0 || len(m.runState.NodeStates) == 0 {
+		return nodes
+	}
+	for idx := range nodes {
+		id := strings.ToLower(strings.TrimSpace(nodes[idx].ID))
+		if id == "" {
+			continue
+		}
+		if ns, ok := m.runState.NodeStates[id]; ok {
+			nodes[idx].Pwned = strings.EqualFold(ns.State, "PWNED") || strings.EqualFold(ns.State, "VERIFIED")
+			nodes[idx].Detail = strings.TrimSpace(nodes[idx].Detail + " | state=" + ns.State + " confidence=" + fmt.Sprintf("%d%%", ns.Confidence))
+			continue
+		}
+		switch {
+		case strings.HasPrefix(id, "api-endpoint"), strings.HasPrefix(id, "collection"), strings.HasPrefix(id, "record"):
+			if ns, ok := m.runState.NodeStates["api"]; ok {
+				nodes[idx].Pwned = strings.EqualFold(ns.State, "PWNED") || strings.EqualFold(ns.State, "VERIFIED")
+			}
+		}
+	}
+	return nodes
 }
 
 func (m model) archGraphActionsForNode(node attackGraphNode) []controlAction {
@@ -2859,6 +2941,7 @@ func (m *model) reload() {
 	loadedLoot := loadJSONL[lootEntry](filepath.Join(m.telemetryDir, "loot.jsonl"))
 	m.loot = collapseLootEvents(augmentLootWithFindings(loadedLoot, m.findings, m.state.TargetURL))
 	m.exploits = loadJSONL[exploitEntry](filepath.Join(m.telemetryDir, "exploits.jsonl"))
+	m.runState = telemetrypkg.Reduce(m.telemetryEvents())
 	m.attackModules = loadAttackModules(m.root)
 	m.cveTasks = discoverCVETasks(m.root)
 	m.replayRuns = discoverReplayRuns(m.root)
@@ -2967,6 +3050,219 @@ func (m *model) reload() {
 	}
 }
 
+func (m model) telemetryEvents() []telemetrypkg.Event {
+	events := make([]telemetrypkg.Event, 0, len(m.commands)+len(m.findings)+len(m.loot))
+	recorded := loadJSONL[telemetrypkg.Event](filepath.Join(m.telemetryDir, "events.jsonl"))
+	if len(recorded) > 0 {
+		events = append(events, recorded...)
+	}
+	runID := filepath.Base(strings.TrimSpace(m.telemetryDir))
+	if runID == "" || strings.EqualFold(runID, "telemetry") {
+		runID = "live"
+	}
+	targetRef := strings.TrimSpace(m.state.TargetURL)
+	for _, cmd := range m.commands {
+		ts := parseTimestampOrNow(cmd.Timestamp)
+		lane := inferTelemetryLane(cmd.Phase, cmd.Tool, cmd.Command)
+		event := telemetrypkg.Event{
+			Timestamp:  ts,
+			RunID:      runID,
+			Mode:       normalizeMode(cmd.Phase),
+			Lane:       lane,
+			ActionID:   strings.TrimSpace(cmd.Tool),
+			TargetRef:  targetRef,
+			Command:    strings.TrimSpace(cmd.Command),
+			Status:     strings.TrimSpace(cmd.Status),
+			Confidence: commandConfidenceFromEntry(cmd),
+			OpsecDelta: commandOpsecDeltaFromEntry(cmd),
+			PwnDelta:   commandPwnDeltaFromEntry(cmd),
+			Meta: map[string]string{
+				"phase": strings.TrimSpace(cmd.Phase),
+				"tool":  strings.TrimSpace(cmd.Tool),
+			},
+		}
+		events = append(events, event)
+	}
+	for _, finding := range m.findings {
+		ts := parseTimestampOrNow(finding.Timestamp)
+		lane := inferTelemetryLane(finding.Phase, "", finding.Title+" "+finding.Endpoint)
+		events = append(events, telemetrypkg.Event{
+			Timestamp:  ts,
+			RunID:      runID,
+			Mode:       normalizeMode(finding.Phase),
+			Lane:       lane,
+			ActionID:   "finding",
+			TargetRef:  targetRef,
+			Command:    valueOr(strings.TrimSpace(finding.Endpoint), strings.TrimSpace(finding.Title)),
+			Status:     "ok",
+			Confidence: findingConfidenceScore(finding),
+			OpsecDelta: 0,
+			PwnDelta:   max(6, severityWeight(finding.Severity)*4),
+			Meta: map[string]string{
+				"severity": strings.TrimSpace(finding.Severity),
+				"title":    strings.TrimSpace(finding.Title),
+				"impact":   strings.TrimSpace(finding.Impact),
+			},
+		})
+	}
+	for _, loot := range m.loot {
+		ts := parseTimestampOrNow(loot.Timestamp)
+		lane := inferTelemetryLane("", loot.Kind, loot.Name+" "+loot.Source)
+		events = append(events, telemetrypkg.Event{
+			Timestamp:  ts,
+			RunID:      runID,
+			Mode:       "exploit",
+			Lane:       lane,
+			ActionID:   "loot",
+			TargetRef:  targetRef,
+			Command:    valueOr(strings.TrimSpace(loot.Source), strings.TrimSpace(loot.Name)),
+			Status:     "ok",
+			Confidence: lootConfidenceScore(loot),
+			OpsecDelta: 0,
+			PwnDelta:   lootPwnDelta(loot),
+			Artifacts: []telemetrypkg.ArtifactRef{
+				{
+					Kind:    strings.TrimSpace(loot.Kind),
+					Name:    strings.TrimSpace(loot.Name),
+					Source:  strings.TrimSpace(loot.Source),
+					Preview: strings.TrimSpace(loot.Preview),
+					ID:      sanitizeToken(strings.TrimSpace(loot.Name + "-" + loot.Source)),
+				},
+			},
+		})
+	}
+	return events
+}
+
+func parseTimestampOrNow(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Now().UTC()
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+	}
+	for _, layout := range layouts {
+		if ts, err := time.Parse(layout, raw); err == nil {
+			return ts.UTC()
+		}
+	}
+	return time.Now().UTC()
+}
+
+func normalizeMode(phase string) string {
+	p := strings.ToLower(strings.TrimSpace(phase))
+	switch p {
+	case "exploit", "osint", "onchain", "coop":
+		return p
+	default:
+		return "exploit"
+	}
+}
+
+func inferTelemetryLane(phase, tool, command string) string {
+	meta := strings.ToLower(strings.TrimSpace(phase + " " + tool + " " + command))
+	switch {
+	case strings.Contains(meta, "recon") || strings.Contains(meta, "nmap") || strings.Contains(meta, "whatweb"):
+		return "recon"
+	case strings.Contains(meta, "surface") || strings.Contains(meta, "ffuf") || strings.Contains(meta, "katana") || strings.Contains(meta, "gau"):
+		return "surface"
+	case strings.Contains(meta, "web-adv") || strings.Contains(meta, "xss") || strings.Contains(meta, "sqli") || strings.Contains(meta, "sqlmap"):
+		return "web-adv"
+	case strings.Contains(meta, "exploit"):
+		return "exploit"
+	case strings.Contains(meta, "access") || strings.Contains(meta, "token") || strings.Contains(meta, "credential") || strings.Contains(meta, "auth") || strings.Contains(meta, "hydra"):
+		return "access"
+	case strings.Contains(meta, "ad") || strings.Contains(meta, "kerberos") || strings.Contains(meta, "ldap"):
+		return "ad"
+	case strings.Contains(meta, "k8s") || strings.Contains(meta, "kube") || strings.Contains(meta, "kubectl"):
+		return "k8s"
+	case strings.Contains(meta, "crack") || strings.Contains(meta, "hashcat") || strings.Contains(meta, "john"):
+		return "crack"
+	case strings.Contains(meta, "privesc") || strings.Contains(meta, "privilege"):
+		return "privilege"
+	case strings.Contains(meta, "objective") || strings.Contains(meta, "tamper") || strings.Contains(meta, "exfil"):
+		return "objective"
+	default:
+		return "surface"
+	}
+}
+
+func commandOpsecDeltaFromEntry(cmd commandEntry) int {
+	score := 3
+	meta := strings.ToLower(strings.TrimSpace(cmd.Command + " " + cmd.Tool + " " + cmd.Phase))
+	if strings.Contains(meta, "nmap") || strings.Contains(meta, "masscan") || strings.Contains(meta, "rustscan") {
+		score += 7
+	}
+	if strings.Contains(meta, "hydra") || strings.Contains(meta, "brute") {
+		score += 11
+	}
+	if strings.Contains(meta, "sqlmap") || strings.Contains(meta, "msfconsole") {
+		score += 9
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(cmd.Status)), "fail") || strings.Contains(strings.ToLower(strings.TrimSpace(cmd.Status)), "error") {
+		score += 2
+	}
+	return clamp(score, 0, 25)
+}
+
+func commandPwnDeltaFromEntry(cmd commandEntry) int {
+	score := 1
+	meta := strings.ToLower(strings.TrimSpace(cmd.Command + " " + cmd.Tool + " " + cmd.OutputPreview))
+	if strings.Contains(meta, "vuln") || strings.Contains(meta, "cve") {
+		score += 6
+	}
+	if strings.Contains(meta, "credential") || strings.Contains(meta, "token") || strings.Contains(meta, "jwt") {
+		score += 10
+	}
+	if strings.Contains(meta, "admin") || strings.Contains(meta, "root") || strings.Contains(meta, "pwn") {
+		score += 14
+	}
+	if strings.Contains(meta, "tamper") || strings.Contains(meta, "modify") || strings.Contains(meta, "write") {
+		score += 12
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(cmd.Status)), "fail") || strings.Contains(strings.ToLower(strings.TrimSpace(cmd.Status)), "error") {
+		score = max(0, score-2)
+	}
+	return clamp(score, 0, 30)
+}
+
+func commandConfidenceFromEntry(cmd commandEntry) int {
+	score := 50
+	if isSuccessStatus(cmd.Status, cmd.ExitCode) {
+		score += 18
+	}
+	meta := strings.ToLower(strings.TrimSpace(cmd.OutputPreview))
+	if strings.Contains(meta, "http") || strings.Contains(meta, "endpoint") {
+		score += 8
+	}
+	if strings.Contains(meta, "credential") || strings.Contains(meta, "token") || strings.Contains(meta, "jwt") || strings.Contains(meta, "vuln") {
+		score += 12
+	}
+	if strings.Contains(meta, "error") || strings.Contains(meta, "failed") {
+		score -= 20
+	}
+	return clamp(score, 0, 100)
+}
+
+func lootPwnDelta(item lootEntry) int {
+	meta := strings.ToLower(strings.TrimSpace(item.Kind + " " + item.Name + " " + item.Source + " " + item.Preview))
+	score := 4
+	if strings.Contains(meta, "credential") || strings.Contains(meta, "token") || strings.Contains(meta, "jwt") {
+		score += 10
+	}
+	if strings.Contains(meta, "db") || strings.Contains(meta, "database") {
+		score += 12
+	}
+	if strings.Contains(meta, "admin") || strings.Contains(meta, "write") || strings.Contains(meta, "tamper") {
+		score += 12
+	}
+	return clamp(score, 0, 30)
+}
+
 func (m model) View() string {
 	if !m.ready {
 		return "loading..."
@@ -3012,7 +3308,8 @@ func (m model) headerView() string {
 		rendered = append(rendered, style.Render(label))
 	}
 	bar := lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", m.spinner.View(), "  ", strings.Join(rendered, " "))
-	return lipgloss.NewStyle().Padding(0, 1).Render(bar + "\n" + status)
+	hud := renderGamifiedHeaderHUD(m, max(56, m.width-4))
+	return lipgloss.NewStyle().Padding(0, 1).Render(bar + "\n" + status + "\n" + hud)
 }
 
 func (m model) splashView() string {
@@ -3104,6 +3401,7 @@ func (m model) overviewView() string {
 
 	left := pane("[ARCH] TARGET // "+strings.ToUpper(mode)+" STATUS", strings.Join([]string{
 		operatorArt,
+		renderMissionGameCard(m.runState, leftWidth-4),
 		metricLine("operator", modeOperatorProfile(mode)),
 		metricLine("lab", valueOr(m.state.LabName, "waiting")),
 		metricLine("target", valueOr(m.state.TargetName, "waiting")),
@@ -3114,6 +3412,9 @@ func (m model) overviewView() string {
 		metricLine("phase", valueOr(m.state.Phase, "waiting")),
 		metricLine("updated", shortTime(m.state.LastUpdated)),
 		ternary(strings.EqualFold(mode, "exploit"), "\n"+lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("campaign ratings")+"\n"+exploitCampaignRatingsBoard(scopedCommands, scopedFindings, scopedLoot, leftWidth-4), ""),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("quest tracker"),
+		renderQuestTracker(m.runState.Unlocks, leftWidth-4),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("timeline replay"),
 		wrap("OPS tab -> select event -> x to replay from timeline", leftWidth-4),
@@ -3134,11 +3435,19 @@ func (m model) overviewView() string {
 		metricLine("critical escalations", fmt.Sprintf("%d", countEscalation(m.exploits, "critical"))),
 		metricLine("tools", strings.Join(uniqueTools(scopedCommands), ", ")),
 		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("tactical radar"),
+		renderLaneRadar(m.runState.NodeStates, rightWidth-4),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("fog-of-war objectives"),
+		renderFogQuestBoard(m.runState.NodeStates, rightWidth-4),
+		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("tool heatmap"),
 		toolHeatmap(scopedCommands, rightWidth-4),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("mission board"),
 		missionBoard(m.state, scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("capability unlocks"),
+		renderRunUnlocks(m.runState.Unlocks, rightWidth-4),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("workflow chain"),
 		modeWorkflowBoard(mode, scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
@@ -3154,6 +3463,7 @@ func (m model) overviewView() string {
 		)
 	}
 	if strings.EqualFold(mode, "exploit") {
+		activeLane := m.selectedExploitFireGroup()
 		graphNodes := buildExploitAttackGraph(m.state, scopedCommands, scopedFindings, scopedLoot)
 		graphEdges := buildExploitAttackEdges(m.state, scopedCommands, scopedFindings, graphNodes)
 		graphSel := clampWrap(m.archGraphIdx, max(1, len(graphNodes)))
@@ -3173,7 +3483,13 @@ func (m model) overviewView() string {
 			exploitAttackDegreeMap(scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("next best action"),
-			nextBestActionCard(scopedCommands, scopedFindings, scopedLoot, m.state.TargetURL, rightWidth-4),
+			nextBestActionCardForLane(activeLane, scopedCommands, scopedFindings, scopedLoot, m.state.TargetURL, rightWidth-4),
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("lane quests"),
+			laneQuestBoard(activeLane, scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("campaign grade"),
+			campaignGradeCard(scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
 		)
 	} else {
 		rightTopLines = append(rightTopLines,
@@ -3225,6 +3541,14 @@ func (m model) exploitArchMapView(leftWidth, rightWidth int, commands []commandE
 		selectedFieldValue = value
 	}
 	rightLines = append(rightLines,
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("mission hud"),
+		metricLine("phase", strings.ToUpper(valueOr(m.runState.Phase, "recon"))),
+		metricLine("opsec/pwn", fmt.Sprintf("%d/%d", m.runState.Scores.Opsec, m.runState.Scores.Pwned)),
+		metricLine("next", truncate(valueOr(m.runState.NextBest, "expand surface map"), max(20, rightWidth-12))),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("objective tracker"),
+		renderQuestTracker(m.runState.Unlocks, rightWidth-4),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("node actions"),
 		metricLine("nav", "↑/↓ tree  ←/→ hierarchy  h/l collapse-expand"),
@@ -3322,6 +3646,12 @@ func (m model) commandsView() string {
 		cmd := m.commands[m.commandIdx]
 		detail = strings.Join([]string{
 			metricLine("scope", strings.ToUpper(mode)+" :: "+modeOperatorProfile(mode)),
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("mission loop"),
+			workflowLoopSummary(m.state.TargetURL, m.controlLastLabel, m.controlBusy, scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("what changed"),
+			latestDeltaSummary(scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("attack timeline"),
 			attackTimeline(scopedCommands, rightWidth-4),
@@ -3423,41 +3753,54 @@ func (m model) findingsView() string {
 		isFullyPwned := false
 		if strings.EqualFold(mode, "exploit") {
 			exploitStats := exploitMissionMetrics(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"))
-			isFullyPwned = exploitStats.DoneStages >= 6
+			isFullyPwned = exploitStats.DoneStages >= 6 || exploitStats.ProgressPct >= 84 || m.runState.Scores.Pwned >= 70
 		}
 		pwnedArt := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Render(fallbackASCII)
 		if isFullyPwned {
 			pwnedArt = lipgloss.NewStyle().Foreground(lipgloss.Color("160")).Render(pwnedSkullASCII)
 		}
 		opsec := actionEffectiveOpsecScore(action, modeCommands)
+		detailMode := ternary(m.detailDeepMode, "DEEP", "COMPACT")
 		detail = strings.Join([]string{
 			pwnedArt,
 			"",
-			exploitAttackDegreeMap(m.commands, m.findings, m.loot, rightWidth-4),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("finding snapshot"),
+			wrap(fmt.Sprintf("%s  %s  phase=%s  endpoint=%s  at=%s",
+				severityBadge(f.Severity),
+				fmt.Sprintf("RISK-%d", severityWeight(f.Severity)),
+				truncate(f.Phase, 16),
+				truncate(f.Endpoint, max(18, rightWidth-42)),
+				shortTime(f.Timestamp)), rightWidth-4),
 			"",
-			metricLine("severity", severityBadge(f.Severity)),
-			metricLine("risk score", fmt.Sprintf("RISK-%d", severityWeight(f.Severity))),
-			metricLine("phase", f.Phase),
-			metricLine("endpoint", f.Endpoint),
-			metricLine("time", shortTime(f.Timestamp)),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("what changed"),
+			latestDeltaSummary(modeCommands, findingsByMode(m.findings, mode), lootByMode(m.loot, mode), rightWidth-4),
 			"",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("evidence"),
-			wrap(f.Evidence, rightWidth-4),
-			"",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("impact"),
-			wrap(f.Impact, rightWidth-4),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("evidence + impact"),
+			wrap("evidence :: "+f.Evidence, rightWidth-4),
+			wrap("impact   :: "+f.Impact, rightWidth-4),
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("next move"),
 			renderTips(tips, rightWidth-4),
 			"",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("follow-up fire command"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("follow-up command"),
 			wrap(actionCommand, rightWidth-4),
-			metricLine("opsec meter", opsecMeter(opsec)),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("next best action"),
-			nextBestActionCard(m.commands, m.findings, m.loot, m.state.TargetURL, rightWidth-4),
-			metricLine("trigger", "Enter or f"),
+			metricLine("opsec", opsecMeter(opsec)),
+			metricLine("confidence", fmt.Sprintf("%d%%", findingConfidenceScore(f))),
+			metricLine("detail mode", detailMode+" (z toggles)"),
 			metricLine("status", valueOr(m.pwnedFireStatus, "idle")+" "+taxonomyAnimation(m.pwnedFireOutcome, m.pwnedFireBusy, m.pwnedFireUntil)),
+			metricLine("trigger", "Enter/f"),
 		}, "\n")
+		if m.detailDeepMode {
+			deepBlocks := []string{
+				"",
+				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("attack degree"),
+				exploitAttackDegreeMap(m.commands, m.findings, m.loot, rightWidth-4),
+				"",
+				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("next best action"),
+				nextBestActionCard(m.commands, m.findings, m.loot, m.state.TargetURL, rightWidth-4),
+			}
+			detail += "\n" + strings.Join(deepBlocks, "\n")
+		}
 		if out := strings.TrimSpace(m.pwnedFireOutput); out != "" {
 			detail += "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("last fire output") + "\n" + wrap(truncate(out, max(120, rightWidth*2)), rightWidth-4)
 		}
@@ -3497,66 +3840,32 @@ func (m model) lootView() string {
 	detail := "No loot yet."
 	if len(order) > 0 && m.lootIdx >= 0 && m.lootIdx < len(m.loot) {
 		item := m.loot[m.lootIdx]
-		risk := lootRisk(item)
 		tips := nextTipsForLoot(item, m.state.TargetURL)
 		modeLabel := "EXPLOIT"
 		if m.lootOnchainMode {
 			modeLabel = "ONCHAIN"
 		}
-		summaryLabel := "loot summary"
-		discoveryLabel := "recent discoveries"
-		discoveryContent := recentLoot(filteredLoot, rightWidth-4)
-		if m.lootOnchainMode {
-			summaryLabel = "onchain result summary"
-			discoveryLabel = "onchain results by tool"
-			discoveryContent = onchainLootToolSummary(filteredLoot, rightWidth-4)
-		}
 		detailLines := []string{
-			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("inventory mode"),
-			metricLine("mode", ternary(m.lootRawMode, "raw", "analysis")),
-			metricLine("scope", modeLabel+" LOOT (`o` fog mission, `c` ONCHAIN scope)"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("loot snapshot"),
+			metricLine("scope", modeLabel),
+			metricLine("view", ternary(m.lootRawMode, "raw", "analysis")),
+			metricLine("detail mode", ternary(m.detailDeepMode, "DEEP", "COMPACT")+" (z toggles)"),
+			metricLine("selected", truncate(item.Name, max(18, rightWidth-18))),
+			metricLine("kind/source", kindBadge(item.Kind)+" / "+truncate(item.Source, max(18, rightWidth-22))),
 			"",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(summaryLabel),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("operator flow"),
+			wrap("1) select loot item  2) choose mapped action with ,/.  3) fire Enter/f  4) inspect delta in OPS/CTRL", rightWidth-4),
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("what changed"),
+			latestDeltaSummary(commandsByMode(m.commands, strings.ToLower(strings.TrimSpace(m.fireMode))), findingsByMode(m.findings, strings.ToLower(strings.TrimSpace(m.fireMode))), filteredLoot, rightWidth-4),
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("collection summary"),
 			lootSummary(filteredLoot, rightWidth-4),
-			"",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(discoveryLabel),
-			discoveryContent,
-			"",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("compromise board"),
-			lootCompromiseMap(filteredLoot, rightWidth-4),
-			"",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("risk assessment"),
-			metricLine("severity", severityBadge(risk.Severity)),
-			metricLine("critical issue", wrap(risk.CriticalIssue, rightWidth-18)),
-			metricLine("taxonomy", risk.Taxonomy),
-		}
-		if m.lootOnchainMode {
-			detailLines = append(detailLines,
-				"",
-				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("onchain evidence stream"),
-				recentLoot(filteredLoot, rightWidth-4),
-				"",
-			)
-		} else {
-			detailLines = append(detailLines,
-				"",
-				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("target posture"),
-				postureBadges(m.commands, m.findings, filteredLoot, rightWidth-4),
-				"",
-				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("cred graph"),
-				credGraph(filteredLoot, rightWidth-4),
-				"",
-				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("session + creds ledger"),
-				sessionLedger(filteredLoot, rightWidth-4),
-				"",
-			)
 		}
 		detailLines = append(detailLines,
-			metricLine("kind", kindBadge(item.Kind)),
-			metricLine("name", item.Name),
-			metricLine("source", item.Source),
-			metricLine("where", lootWhere(item)),
+			metricLine("where", truncate(lootWhere(item), max(20, rightWidth-18))),
 			metricLine("time", shortTime(item.Timestamp)),
+			metricLine("confidence", fmt.Sprintf("%d%%", lootConfidenceScore(item))),
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(ternary(m.lootRawMode, "raw content", "preview")),
 			wrap(ternary(m.lootRawMode, lootRawContent(m.root, item), item.Preview), rightWidth-4),
@@ -3566,6 +3875,38 @@ func (m model) lootView() string {
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("operator actions"),
 		)
+		if m.detailDeepMode {
+			risk := lootRisk(item)
+			detailLines = append(detailLines,
+				"",
+				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("compromise board"),
+				lootCompromiseMap(filteredLoot, rightWidth-4),
+				"",
+				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("risk"),
+				metricLine("severity", severityBadge(risk.Severity)),
+				metricLine("critical issue", wrap(risk.CriticalIssue, rightWidth-18)),
+				metricLine("taxonomy", risk.Taxonomy),
+			)
+			if m.lootOnchainMode {
+				detailLines = append(detailLines,
+					"",
+					lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("onchain evidence stream"),
+					recentLoot(filteredLoot, rightWidth-4),
+				)
+			} else {
+				detailLines = append(detailLines,
+					"",
+					lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("target posture"),
+					postureBadges(m.commands, m.findings, filteredLoot, rightWidth-4),
+					"",
+					lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("cred graph"),
+					credGraph(filteredLoot, rightWidth-4),
+					"",
+					lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("session + creds ledger"),
+					sessionLedger(filteredLoot, rightWidth-4),
+				)
+			}
+		}
 		lootActions := lootFollowupActions(item, m.state.TargetURL, m.root)
 		if len(lootActions) > 0 {
 			actionPos := clamp(m.lootActionIdx, 0, len(lootActions)-1)
@@ -3581,21 +3922,19 @@ func (m model) lootView() string {
 			}
 			detailLines = append(detailLines,
 				"",
-				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("selected action command"),
+				lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("selected command"),
 				wrap(selectedAction.Command, rightWidth-4),
 				lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("opsec :: "+lootOpsecAlert(selectedAction)),
-				metricLine("opsec meter", opsecMeter(actionEffectiveOpsecScore(selectedAction, m.commands))),
+				metricLine("opsec", opsecMeter(actionEffectiveOpsecScore(selectedAction, m.commands))),
 			)
 		} else {
 			detailLines = append(detailLines, "no mapped operator action")
 		}
 		detailLines = append(detailLines,
-			metricLine("trigger", "Enter or f"),
 			metricLine("status", valueOr(m.lootFireStatus, "idle")+" "+taxonomyAnimation(m.lootFireOutcome, m.lootFireBusy, m.lootFireUntil)),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: ,/. cycles operator actions"),
-			"",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press v to toggle raw/analyzed view"),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: press o for fog mission view, c for ONCHAIN scope, g for CO-OP mode"),
+			metricLine("trigger", "Enter/f"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tips :: aim with selection -> fire Enter/f -> inspect delta in OPS/PWNED"),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("keys :: ,/. action  v raw/analyzed  z compact/deep  o fog  c onchain  g coop"),
 		)
 		if out := strings.TrimSpace(m.lootFireOutput); out != "" {
 			detailLines = append(detailLines,
@@ -3703,41 +4042,182 @@ func renderLootFogSkull(snap chainSnapshot, selected string) string {
 	}, "\n")
 }
 
-func (m model) lootFogStageActions() []controlAction {
-	stage := m.selectedLootFogStage()
-	snap := deriveChainSnapshot(m.commands, m.findings, m.loot)
-	if ok, _ := requirementsReady(stage.Requires, snap); !ok {
+type fogStageActionItem struct {
+	Action controlAction
+	State  string
+	Reason string
+}
+
+func fogStageGroups(stageKey string) []string {
+	switch strings.ToLower(strings.TrimSpace(stageKey)) {
+	case "recon":
+		return []string{"Recon"}
+	case "surface":
+		return []string{"Surface", "Web-Adv"}
+	case "breach":
+		return []string{"Exploit", "Web-Adv", "Surface"}
+	case "access":
+		return []string{"Access", "Crack", "AD", "Privilege", "K8S"}
+	case "objective":
+		return []string{"Objective", "Privilege", "AD", "K8S"}
+	default:
+		return []string{"Recon"}
+	}
+}
+
+func (m model) fogUnlockByKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	for _, unlock := range m.runState.Unlocks {
+		if strings.EqualFold(strings.TrimSpace(unlock.Key), key) {
+			return unlock.Unlocked
+		}
+	}
+	return false
+}
+
+func (m model) fogGroupUnlocked(group string) (bool, string) {
+	group = strings.ToLower(strings.TrimSpace(group))
+	nodeState := func(key string) string {
+		return strings.ToUpper(strings.TrimSpace(m.runState.NodeStates[key].State))
+	}
+	switch group {
+	case "recon", "surface":
+		return true, ""
+	case "web-adv":
+		if m.fogUnlockByKey("surface-map") || nodeState("surface") != "OPEN" {
+			return true, ""
+		}
+		return false, "needs surface discovery unlock"
+	case "exploit":
+		if m.fogUnlockByKey("foothold") || nodeState("auth") == "PARTIAL" || nodeState("auth") == "VERIFIED" || nodeState("auth") == "PWNED" {
+			return true, ""
+		}
+		return false, "needs foothold unlock"
+	case "access", "crack", "ad", "privilege", "k8s":
+		if m.fogUnlockByKey("auth-pivot") || nodeState("auth") == "VERIFIED" || nodeState("auth") == "PWNED" {
+			return true, ""
+		}
+		return false, "needs auth pivot unlock"
+	case "objective":
+		if m.fogUnlockByKey("objective-control") || nodeState("impact") == "VERIFIED" || nodeState("impact") == "PWNED" {
+			return true, ""
+		}
+		return false, "needs objective control unlock"
+	default:
+		return true, ""
+	}
+}
+
+func (m model) fogStagePipelineActions(stage lootFogStage) []controlAction {
+	targetURL := strings.TrimSpace(m.effectiveExploitTargetURL())
+	if targetURL == "" {
+		targetURL = strings.TrimSpace(m.state.TargetURL)
+	}
+	if targetURL == "" {
 		return nil
 	}
-	all := m.filterUnsupportedKaliActions(m.exploitFireActions())
-	actions := make([]controlAction, 0, 8)
+	out := make([]controlAction, 0, 8)
+	for _, group := range fogStageGroups(stage.Key) {
+		for _, pipelineName := range pipelineNamesForFireGroup(group) {
+			spec := pipelineByName(pipelineName)
+			out = append(out, controlAction{
+				Label:       "[PIPELINE] " + selectedPipelineLabel(pipelineName),
+				Description: spec.Summary,
+				Mode:        "local",
+				Command:     "python3 ./scripts/security_pipeline.py --target " + targetURL + " --pipeline " + pipelineName,
+				Args:        []string{"python3", "./scripts/security_pipeline.py", "--target", targetURL, "--pipeline", pipelineName},
+				ActionID:    "--pipeline " + pipelineName,
+				Requires:    pipelineRequirements(pipelineName),
+				Group:       group,
+			})
+		}
+	}
+	return out
+}
+
+func (m model) lootFogStageMappedActions() []fogStageActionItem {
+	stage := m.selectedLootFogStage()
+	snap := deriveChainSnapshot(m.commands, m.findings, m.loot)
+	stageReady, stageReason := requirementsReady(stage.Requires, snap)
+	all := make([]controlAction, 0, 32)
+	seen := map[string]bool{}
+	for _, group := range fogStageGroups(stage.Key) {
+		mm := m
+		mm.setExploitFireGroupByName(group)
+		mm.exploitPipelineMenu = false
+		for _, action := range mm.filterUnsupportedKaliActions(mm.exploitFireActions()) {
+			if strings.EqualFold(strings.TrimSpace(action.Mode), "internal") {
+				continue
+			}
+			if strings.Contains(strings.ToUpper(action.Label), "[MENU]") {
+				continue
+			}
+			key := strings.ToLower(strings.TrimSpace(action.Command + "::" + action.KaliShell + "::" + action.Label))
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			all = append(all, action)
+		}
+	}
+	for _, action := range m.fogStagePipelineActions(stage) {
+		key := strings.ToLower(strings.TrimSpace(action.Command + "::" + action.Label))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		all = append(all, action)
+	}
+	items := make([]fogStageActionItem, 0, len(all))
 	for _, action := range all {
-		if !strings.EqualFold(action.Group, stage.Group) {
-			continue
+		state := "READY"
+		reason := "ready to fire"
+		if !stageReady {
+			state = "LOCKED"
+			reason = stageReason
+		} else if unlocked, why := m.fogGroupUnlocked(action.Group); !unlocked {
+			state = "LOCKED"
+			reason = why
+		} else if done := actionDone(action, m.commands); done {
+			state = "DONE"
+			reason = "already executed successfully"
+		} else if ok, why := requirementsReady(action.Requires, snap); !ok {
+			state = "LOCKED"
+			reason = why
+		} else if ok, why := m.preflightControlAction(action); !ok {
+			state = "LOCKED"
+			reason = why
+		} else if strings.TrimSpace(why) != "" {
+			state = "READY"
+			reason = why
 		}
-		if strings.EqualFold(action.Mode, "internal") {
-			continue
-		}
-		if strings.Contains(strings.ToUpper(action.Label), "[MENU]") {
-			continue
-		}
-		actions = append(actions, action)
+		items = append(items, fogStageActionItem{Action: action, State: state, Reason: reason})
+	}
+	return items
+}
+
+func (m model) lootFogStageActions() []controlAction {
+	items := m.lootFogStageMappedActions()
+	actions := make([]controlAction, 0, len(items))
+	for _, item := range items {
+		actions = append(actions, item.Action)
 	}
 	return actions
 }
 
 func (m *model) submitLootFogAction() tea.Cmd {
-	actions := m.lootFogStageActions()
-	if len(actions) == 0 {
+	items := m.lootFogStageMappedActions()
+	if len(items) == 0 {
 		m.lootFireBusy = false
-		m.lootFireStatus = "blocked :: selected fog stage has no runnable commands"
+		m.lootFireStatus = "blocked :: selected fog stage has no mapped commands"
 		m.lootFireOutcome = "failed"
 		m.lootFireUntil = time.Now().Add(1900 * time.Millisecond)
 		return nil
 	}
-	m.lootFogActionIdx = clamp(m.lootFogActionIdx, 0, len(actions)-1)
-	action := actions[m.lootFogActionIdx]
-	if ok, reason := m.preflightControlAction(action); !ok {
+	m.lootFogActionIdx = clamp(m.lootFogActionIdx, 0, len(items)-1)
+	selected := items[m.lootFogActionIdx]
+	action := selected.Action
+	if ok, reason := m.preflightControlActionForFog(action); !ok {
 		m.lootFireBusy = false
 		m.lootFireStatus = "preflight failed :: " + reason
 		m.lootFireOutcome = "failed"
@@ -3745,11 +4225,45 @@ func (m *model) submitLootFogAction() tea.Cmd {
 		return nil
 	}
 	m.lootFireBusy = true
-	m.lootFireStatus = "running :: " + truncate(action.Label, 56)
+	if strings.EqualFold(selected.State, "LOCKED") {
+		m.lootFireStatus = "running locked lane :: " + truncate(action.Label, 56)
+	} else {
+		m.lootFireStatus = "running :: " + truncate(action.Label, 56)
+	}
 	m.lootFireCommand = valueOr(action.Command, action.KaliShell)
 	m.lootFireOutput = ""
 	m.lootFireOutcome = "running"
 	return lootCmd(m.root, action)
+}
+
+func (m *model) preflightControlActionForFog(action controlAction) (bool, string) {
+	if action.Mode == "internal" {
+		return true, ""
+	}
+	if !m.unsafeMode && isUnsafeControlAction(action) {
+		return false, "unsafe action blocked (press U to enable unsafe mode)"
+	}
+	if strings.EqualFold(strings.TrimSpace(action.ActionID), "bruteforce-adaptive") {
+		if strings.TrimSpace(m.effectiveExploitTargetURL()) == "" {
+			return false, "no active target endpoint selected"
+		}
+	}
+	if action.Mode == "local" && len(action.Args) > 0 {
+		if _, err := exec.LookPath(action.Args[0]); err != nil {
+			return false, "missing local binary: " + action.Args[0]
+		}
+	}
+	if action.Mode == "kali" {
+		if ok, reason := m.kaliPreflight(action); !ok {
+			return false, reason
+		}
+		if requiresCoopAPIRuntime(action) {
+			if ok, reason := coopAPIRuntimeReady(kaliContainerName()); !ok {
+				return false, reason
+			}
+		}
+	}
+	return true, ""
 }
 
 func (m model) lootFogView() string {
@@ -3757,13 +4271,13 @@ func (m model) lootFogView() string {
 	rightWidth := m.width - leftWidth - 2
 	snap := deriveChainSnapshot(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"))
 	stage := m.selectedLootFogStage()
-	actions := m.lootFogStageActions()
+	items := m.lootFogStageMappedActions()
 	left := pane("[LOOT] FOG-OF-WAR MISSION MAP", renderLootFogSkull(snap, stage.Key), leftWidth, m.height-6)
 	lines := []string{
 		metricLine("stage", stage.Title),
 		metricLine("group", strings.ToUpper(stage.Group)),
 		metricLine("state", stageStateTag(stage, snap)),
-		metricLine("ctrl lane", "exploit > FIRE > "+strings.ToUpper(stage.Group)),
+		metricLine("ctrl lane", "exploit > FIRE > dynamic unlock lanes"),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("stage order"),
 	}
@@ -3783,37 +4297,44 @@ func (m model) lootFogView() string {
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("mission brief"),
 		wrap(stage.Description, rightWidth-4),
 		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("unlocked attack lanes"),
+		renderFogQuestBoard(m.runState.NodeStates, rightWidth-4),
+		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("mapped commands"),
 	)
-	if len(actions) == 0 {
-		lines = append(lines, "no runnable commands in this stage yet (locked or unavailable)")
+	if len(items) == 0 {
+		lines = append(lines, "no commands mapped for this stage yet")
 	} else {
-		idx := clamp(m.lootFogActionIdx, 0, len(actions)-1)
-		for i, action := range actions {
+		idx := clamp(m.lootFogActionIdx, 0, len(items)-1)
+		for i, item := range items {
+			action := item.Action
 			prefix := "  "
 			style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 			if i == idx {
 				prefix = "▸ "
 				style = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
 			}
-			lines = append(lines, style.Render(prefix+truncate(action.Label, rightWidth-8)))
+			stateBadge := badgePill(strings.ToUpper(item.State), ternary(strings.EqualFold(item.State, "READY"), "34", ternary(strings.EqualFold(item.State, "DONE"), "57", "160")), "230")
+			lines = append(lines, style.Render(prefix+truncate(stateBadge+" "+action.Label, rightWidth-8)))
 			lines = append(lines, "   "+lipgloss.NewStyle().Foreground(lipgloss.Color("242")).Render(truncate(valueOr(action.Description, "no description"), rightWidth-10)))
 		}
-		selected := actions[idx]
+		selected := items[idx]
 		lines = append(lines,
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("selected command"),
-			wrap(valueOr(selected.Description, "no description"), rightWidth-4),
+			wrap(valueOr(selected.Action.Description, "no description"), rightWidth-4),
+			metricLine("state", strings.ToUpper(selected.State)),
+			metricLine("why", valueOr(strings.TrimSpace(selected.Reason), "-")),
 			"",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("command"),
-			wrap(valueOr(selected.Command, selected.KaliShell), rightWidth-4),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("opsec :: "+lootOpsecAlert(selected)),
-			metricLine("opsec meter", opsecMeter(actionEffectiveOpsecScore(selected, m.commands))),
+			wrap(valueOr(selected.Action.Command, selected.Action.KaliShell), rightWidth-4),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("opsec :: "+lootOpsecAlert(selected.Action)),
+			metricLine("opsec meter", opsecMeter(actionEffectiveOpsecScore(selected.Action, m.commands))),
 		)
 	}
 	lines = append(lines,
 		"",
-		metricLine("controls", "↑/↓ stage  ,/. command  enter/f run  o exit fog"),
+		metricLine("controls", "↑/↓ stage  ,/. command  enter/f run selected  o exit fog"),
 		metricLine("status", valueOr(m.lootFireStatus, "idle")+" "+taxonomyAnimation(m.lootFireOutcome, m.lootFireBusy, m.lootFireUntil)),
 	)
 	if out := strings.TrimSpace(m.lootFireOutput); out != "" {
@@ -3917,6 +4438,9 @@ func (m model) controlView() string {
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("active section"),
 		strings.ToUpper(m.currentControlSectionLabel()) + " :: " + sectionDetail[m.currentControlSectionLabel()],
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("combat loop"),
+		wrap("AIM (preview) -> FIRE (execute) -> LOOT/PWNED delta -> ARCH pivot", leftWidth-4),
 	}
 	lines = append(lines,
 		"",
@@ -3995,6 +4519,8 @@ func (m model) controlView() string {
 			modeLabel = "MAP EDIT PAYLOAD"
 		} else if strings.EqualFold(m.manualTargetKind, "arch-edit-field-value") {
 			modeLabel = "MAP EDIT FIELD VALUE"
+		} else if strings.EqualFold(m.manualTargetKind, "operator-note") {
+			modeLabel = "OPERATOR NOTE"
 		}
 		lines = append(lines,
 			lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Render("manual input active :: "+modeLabel),
@@ -4003,13 +4529,7 @@ func (m model) controlView() string {
 		)
 	}
 
-	status := "idle"
-	if m.controlBusy {
-		status = "running"
-	}
-	if m.controlStatus != "" {
-		status = m.controlStatus
-	}
+	statusLabel, statusDetail := controlStatusState(m.controlStatus, m.controlBusy)
 	output := strings.TrimSpace(m.controlOutput)
 	if output == "" {
 		if m.controlBusy {
@@ -4019,29 +4539,72 @@ func (m model) controlView() string {
 		}
 	}
 	selectedAction := controlAction{}
+	selectedState := "N/A"
+	selectedReason := "no action selected"
 	if len(activeActions) > 0 {
 		selectedAction = activeActions[clamp(m.activeControlIndex(), 0, len(activeActions)-1)]
+		snap := deriveChainSnapshot(m.commands, m.findings, m.loot)
+		state, reason := m.controlActionStatusAndReason(selectedAction, snap, scopedCommands, map[string]bool{})
+		selectedState = state
+		selectedReason = valueOr(strings.TrimSpace(reason), "no details")
 	}
 	rightLines := []string{
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("operation state"),
 		metricLine("mode", scopeLabel),
 		metricLine("section", strings.ToUpper(m.currentControlSectionLabel())),
-		metricLine("status", status+" "+taxonomyAnimation(m.controlOutcome, m.controlBusy, m.controlUntil)),
+		metricLine("run phase", strings.ToUpper(valueOr(m.runState.Phase, "recon"))),
+		metricLine("opsec/pwn", fmt.Sprintf("%d/%d", m.runState.Scores.Opsec, m.runState.Scores.Pwned)),
+		metricLine("guardrail", ternary(m.unsafeMode, "UNSAFE ON (U)", "SAFE ON (U toggles)")),
+		metricLine("status", statusLabel+" "+taxonomyAnimation(m.controlOutcome, m.controlBusy, m.controlUntil)),
+		metricLine("detail", valueOr(statusDetail, "-")),
 		metricLine("preflight", valueOr(strings.TrimSpace(m.controlPreflightWarning), "clean")),
 		metricLine("last action", valueOr(m.controlLastLabel, "none")),
 		metricLine("last command", valueOr(m.controlLastCommand, "none")),
+		metricLine("pins/notes", fmt.Sprintf("%d/%d", len(m.operatorPins), len(m.operatorNotes))),
 		operationStateSummary(mode, scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("mission loop"),
+		workflowLoopSummary(m.state.TargetURL, m.controlLastLabel, m.controlBusy, scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("what changed"),
+		latestDeltaSummary(scopedCommands, scopedFindings, scopedLoot, rightWidth-4),
 		ternary(strings.EqualFold(mode, "coop"), lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(coopTutorialHint(scopedCommands)), ""),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("category options"),
 		m.controlOptionsPanel(rightWidth-4, activeActions),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("next best action"),
-		nextBestActionCard(scopedCommands, scopedFindings, scopedLoot, m.state.TargetURL, rightWidth-4),
+		nextBestActionCardForLane(ternary(strings.EqualFold(mode, "exploit"), m.selectedExploitFireGroup(), ""), scopedCommands, scopedFindings, scopedLoot, m.state.TargetURL, rightWidth-4),
+		ternary(strings.EqualFold(mode, "exploit"), lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("lane quest"), ""),
+		ternary(strings.EqualFold(mode, "exploit"), laneQuestBoard(m.selectedExploitFireGroup(), scopedCommands, scopedFindings, scopedLoot, rightWidth-4), ""),
+		metricLine("selected state", selectedState),
+		metricLine("why locked", truncate(selectedReason, max(24, rightWidth-16))),
 		metricLine("selected opsec", opsecMeter(actionEffectiveOpsecScore(selectedAction, scopedCommands))),
+		metricLine("selected schema", truncate(m.controlActionSchema(selectedAction), max(24, rightWidth-20))),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("aiming reticle"),
+		ternary(m.controlPreviewArmed, m.controlPreviewText, "reticle idle (Enter/f once to aim, again to fire)"),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("after-action card"),
+		valueOr(strings.TrimSpace(m.controlAfterActionCard), "no completed action card yet"),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("command result"),
 		output,
+	}
+	if len(m.operatorPins) > 0 || len(m.operatorNotes) > 0 {
+		rightLines = append(rightLines,
+			"",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("operator memory"),
+		)
+		if len(m.operatorPins) > 0 {
+			for _, item := range sortedMapValues(m.operatorPins, 2) {
+				rightLines = append(rightLines, "pin :: "+truncate(item, max(24, rightWidth-12)))
+			}
+		}
+		if len(m.operatorNotes) > 0 {
+			note := m.operatorNotes[len(m.operatorNotes)-1]
+			rightLines = append(rightLines, "note :: "+truncate(note, max(24, rightWidth-12)))
+		}
 	}
 
 	return lipgloss.JoinHorizontal(
@@ -4284,6 +4847,7 @@ func (m model) controlOptionsPanel(width int, actions []controlAction) string {
 				metricLine("fire view", view),
 				metricLine("fire group (↑/↓)", strings.ToUpper(m.selectedExploitFireGroup())),
 				metricLine("pipeline", selectedPipelineLabel(m.selectedPipelineName())),
+				metricLine("intent quickset", "surface/exploit/access/objective"),
 			)
 			if strings.EqualFold(m.selectedExploitFireGroup(), "Access") {
 				selectedLoot := "none"
@@ -4317,6 +4881,7 @@ func (m model) controlOptionsPanel(width int, actions []controlAction) string {
 	lines = append(lines,
 		metricLine("selected option", selected.Label),
 		metricLine("description", truncate(selected.Description, max(24, width-16))),
+		metricLine("schema", truncate(m.controlActionSchema(selected), max(24, width-12))),
 		metricLine("command", truncate(selectedCommand, max(24, width-12))),
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("available options"),
@@ -4334,6 +4899,23 @@ func (m model) controlOptionsPanel(width int, actions []controlAction) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m model) controlActionStatusAndReason(action controlAction, snap chainSnapshot, commands []commandEntry, doneCache map[string]bool) (string, string) {
+	if done := actionDoneCached(action, commands, doneCache); done {
+		return "DONE", "already executed successfully"
+	}
+	if ok, reason := requirementsReady(action.Requires, snap); !ok {
+		return "LOCKED", reason
+	}
+	if strings.EqualFold(strings.TrimSpace(action.Mode), "internal") {
+		return "MENU", "navigation/configuration action"
+	}
+	mm := m
+	if ok, reason := mm.preflightControlAction(action); !ok {
+		return "LOCKED", reason
+	}
+	return "READY", "action can run"
+}
+
 func (m model) controlActionTaggedLabel(action controlAction, snap chainSnapshot, commands []commandEntry, doneCache map[string]bool) string {
 	tags := []string{}
 	switch strings.ToLower(strings.TrimSpace(action.Mode)) {
@@ -4344,17 +4926,13 @@ func (m model) controlActionTaggedLabel(action controlAction, snap chainSnapshot
 	case "internal":
 		tags = append(tags, "MENU")
 	}
-	if done := actionDoneCached(action, commands, doneCache); done {
+	state, _ := m.controlActionStatusAndReason(action, snap, commands, doneCache)
+	switch state {
+	case "DONE":
 		tags = append(tags, "DONE")
-	} else if ok, _ := requirementsReady(action.Requires, snap); !ok {
+	case "LOCKED":
 		tags = append(tags, "LOCKED")
-	} else if strings.EqualFold(strings.TrimSpace(action.Mode), "kali") {
-		if ok, _ := m.kaliPreflight(action); !ok {
-			tags = append(tags, "LOCKED")
-		} else {
-			tags = append(tags, "READY")
-		}
-	} else if !strings.EqualFold(strings.TrimSpace(action.Mode), "internal") {
+	case "READY":
 		tags = append(tags, "READY")
 	}
 	if len(tags) == 0 {
@@ -4401,6 +4979,168 @@ func styleControlOptionTags(label string) string {
 	return out
 }
 
+func controlActionPreviewKey(action controlAction) string {
+	base := strings.TrimSpace(action.ActionID)
+	if base == "" {
+		base = strings.TrimSpace(action.Command + "::" + action.KaliShell + "::" + action.Label)
+	}
+	return strings.ToLower(base)
+}
+
+func actionProducesHint(action controlAction) string {
+	group := strings.ToLower(strings.TrimSpace(action.Group))
+	switch group {
+	case "recon":
+		return "surface signals,endpoints"
+	case "surface":
+		return "mapped routes,service metadata"
+	case "web-adv", "exploit":
+		return "vuln evidence,foothold"
+	case "access":
+		return "credential-fit,session artifacts"
+	case "ad", "k8s":
+		return "lateral map,privileged paths"
+	case "crack":
+		return "recovered credentials"
+	case "privilege":
+		return "escalation evidence"
+	case "objective":
+		return "tamper/exfil proof"
+	default:
+		return "telemetry artifacts"
+	}
+}
+
+func actionGainHint(action controlAction) string {
+	group := strings.ToUpper(strings.TrimSpace(action.Group))
+	if group == "" {
+		group = "UTILITY"
+	}
+	return group
+}
+
+func actionOpsecCostLabel(action controlAction, commands []commandEntry) string {
+	score := actionEffectiveOpsecScore(action, commands)
+	switch {
+	case score >= 70:
+		return "HIGH"
+	case score >= 35:
+		return "MED"
+	default:
+		return "LOW"
+	}
+}
+
+func (m model) controlActionSchema(action controlAction) string {
+	snap := deriveChainSnapshot(m.commands, m.findings, m.loot)
+	state, _ := m.controlActionStatusAndReason(action, snap, m.commands, map[string]bool{})
+	depends := "none"
+	if len(action.Requires) > 0 {
+		parts := make([]string, 0, len(action.Requires))
+		for _, req := range action.Requires {
+			parts = append(parts, strings.ToUpper(strings.TrimSpace(req)))
+		}
+		depends = strings.Join(parts, ",")
+	}
+	return fmt.Sprintf("state=%s | cost=%s | gain=%s | depends_on=%s | produces=%s",
+		state, actionOpsecCostLabel(action, m.commands), actionGainHint(action), depends, actionProducesHint(action))
+}
+
+func actionOutputConfidence(output string, err error) int {
+	if err != nil {
+		return 20
+	}
+	score := 55
+	text := strings.ToLower(strings.TrimSpace(output))
+	if text == "" {
+		return 40
+	}
+	if strings.Contains(text, "error") || strings.Contains(text, "failed") {
+		score -= 25
+	}
+	if strings.Contains(text, "http") || strings.Contains(text, "endpoint") {
+		score += 8
+	}
+	if strings.Contains(text, "credential") || strings.Contains(text, "token") || strings.Contains(text, "pwn") || strings.Contains(text, "vuln") {
+		score += 12
+	}
+	if strings.Contains(text, "{") || strings.Contains(text, "[") {
+		score += 8
+	}
+	if strings.Contains(text, "timeout") {
+		score -= 10
+	}
+	return clamp(score, 0, 100)
+}
+
+func findingConfidenceScore(item findingEntry) int {
+	score := 45 + severityWeight(item.Severity)*4
+	meta := strings.ToLower(item.Title + " " + item.Evidence + " " + item.Impact)
+	if strings.Contains(meta, "credential") || strings.Contains(meta, "token") || strings.Contains(meta, "authenticated") {
+		score += 12
+	}
+	if strings.TrimSpace(item.Endpoint) != "" {
+		score += 8
+	}
+	return clamp(score, 0, 100)
+}
+
+func lootConfidenceScore(item lootEntry) int {
+	score := 40
+	meta := strings.ToLower(item.Kind + " " + item.Name + " " + item.Source + " " + item.Preview)
+	if strings.Contains(meta, "credential-fit") || strings.Contains(meta, "token") || strings.Contains(meta, "jwt") {
+		score += 20
+	}
+	if strings.Contains(meta, "db") || strings.Contains(meta, "backup") || strings.Contains(meta, "admin") {
+		score += 16
+	}
+	if strings.TrimSpace(item.Source) != "" {
+		score += 8
+	}
+	return clamp(score, 0, 100)
+}
+
+func (m model) renderControlActionPreview(action controlAction) string {
+	command := valueOr(strings.TrimSpace(action.Command), strings.TrimSpace(action.KaliShell))
+	if strings.EqualFold(strings.TrimSpace(action.Mode), "kali") && strings.TrimSpace(action.KaliShell) != "" {
+		command = kaliExecCommand(action.KaliShell)
+	}
+	return strings.Join([]string{
+		metricLine("action", action.Label),
+		metricLine("schema", m.controlActionSchema(action)),
+		metricLine("opsec", opsecMeter(actionEffectiveOpsecScore(action, m.commands))),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("command preview"),
+		wrap(truncate(command, 220), max(40, m.width/2)),
+	}, "\n")
+}
+
+func (m model) renderAfterActionCard(msg controlResultMsg) string {
+	out := sanitizeTerminalOutput(strings.TrimSpace(msg.Output))
+	lines := 0
+	if strings.TrimSpace(out) != "" {
+		lines = len(strings.Split(strings.TrimSpace(out), "\n"))
+	}
+	conf := actionOutputConfidence(out, msg.Err)
+	status := "success"
+	if msg.Err != nil {
+		status = "failed"
+	}
+	next := "review output + decide next action"
+	if strings.Contains(strings.ToLower(out), "credential") {
+		next = "pivot from LOOT credential fit actions"
+	} else if strings.Contains(strings.ToLower(out), "endpoint") {
+		next = "move to ARCH map and explore endpoint node"
+	} else if msg.Err != nil {
+		next = "inspect preflight/target and rerun"
+	}
+	return strings.Join([]string{
+		metricLine("status", strings.ToUpper(status)),
+		metricLine("confidence", fmt.Sprintf("%d%%", conf)),
+		metricLine("output lines", fmt.Sprintf("%d", lines)),
+		metricLine("next", next),
+	}, "\n")
+}
+
 func (m model) controlModeContextLines(mode, selectedTask string, onchainProfile onchainNetworkProfile) []string {
 	customMode := strings.ToUpper(m.activeCustomRuntime())
 	customCommand := truncate(valueOr(m.activeCustomCommand(mode), "unset"), 54)
@@ -4439,7 +5179,25 @@ func (m model) controlModeContextLines(mode, selectedTask string, onchainProfile
 }
 
 func (m model) footerView() string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Padding(0, 1).Render(m.help.View(m.keys))
+	hints := m.panelHintLine()
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Padding(0, 1).Render(m.help.View(m.keys) + "\n" + hints)
+}
+
+func (m model) panelHintLine() string {
+	switch m.tab {
+	case 0:
+		return "ARCH loop :: read mission HUD -> inspect map node -> run mapped action -> verify objective delta"
+	case 1:
+		return "OPS loop :: scroll timeline -> replay critical event (x) -> validate output confidence -> pivot"
+	case 2:
+		return "PWNED loop :: select finding -> run follow-up -> confirm exploitability -> escalate lane"
+	case 3:
+		return "LOOT loop :: select artifact -> mapped action (,/.) -> fire Enter/f -> verify new access path"
+	case 4:
+		return "CTRL loop :: select lane -> aim preview -> fire execute -> inspect after-action card"
+	default:
+		return "H3RETIK operator loop active"
+	}
 }
 
 func pane(title, body string, width, height int) string {
@@ -4470,6 +5228,184 @@ func badgePill(text, bg, fg string) string {
 func metricLine(label, value string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(label+": ") +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Render(value)
+}
+
+func hudTag(label, bg, fg string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(fg)).Background(lipgloss.Color(bg)).Bold(true).Padding(0, 1).Render(label)
+}
+
+func laneStateGlyph(state string) string {
+	switch strings.ToUpper(strings.TrimSpace(state)) {
+	case "PWNED":
+		return "▓"
+	case "VERIFIED":
+		return "▒"
+	case "PARTIAL":
+		return "░"
+	default:
+		return "·"
+	}
+}
+
+func renderLaneRadar(nodes map[string]telemetrypkg.NodeState, width int) string {
+	if len(nodes) == 0 {
+		return wrap("radar offline", width)
+	}
+	order := []string{"surface", "auth", "api", "db", "files", "impact", "objective"}
+	parts := make([]string, 0, len(order))
+	for _, key := range order {
+		ns, ok := nodes[key]
+		if !ok {
+			ns = telemetrypkg.NodeState{State: "OPEN"}
+		}
+		label := strings.ToUpper(key[:min(3, len(key))])
+		parts = append(parts, label+":"+laneStateGlyph(ns.State))
+	}
+	return wrap(strings.Join(parts, " "), width)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func renderGamifiedHeaderHUD(m model, width int) string {
+	next := truncate(valueOr(m.runState.NextBest, "Expand surface map and collect first foothold signal."), max(20, width-90))
+	revealed, total := fogRevealProgress(m.runState.NodeStates)
+	loop := shortPanelLoopHint(m.tab)
+	line := strings.Join([]string{
+		hudTag("NEXT", "238", "250") + " " + next,
+		hudTag("FOG", "57", "230") + " " + fmt.Sprintf("%d/%d revealed", revealed, total),
+		hudTag("LOOP", "238", "250") + " " + loop,
+	}, "  ")
+	return line
+}
+
+func shortPanelLoopHint(tab int) string {
+	switch tab {
+	case 0:
+		return "Map -> Action -> Verify"
+	case 1:
+		return "Timeline -> Replay -> Pivot"
+	case 2:
+		return "Finding -> Follow-up -> Escalate"
+	case 3:
+		return "Loot -> Action -> Delta"
+	case 4:
+		return "Aim -> Fire -> Review"
+	default:
+		return "Operate"
+	}
+}
+
+func fogRevealProgress(nodes map[string]telemetrypkg.NodeState) (int, int) {
+	if len(nodes) == 0 {
+		return 0, 0
+	}
+	order := []string{"surface", "auth", "api", "db", "files", "impact", "objective"}
+	revealed := 0
+	for _, key := range order {
+		state := strings.ToUpper(strings.TrimSpace(nodes[key].State))
+		if state != "" && state != "OPEN" {
+			revealed++
+		}
+	}
+	return revealed, len(order)
+}
+
+func renderFogQuestBoard(nodes map[string]telemetrypkg.NodeState, width int) string {
+	order := []struct {
+		Key   string
+		Label string
+	}{
+		{"surface", "Surface Discovery"},
+		{"auth", "Auth Boundary"},
+		{"api", "API Control"},
+		{"db", "Data/DB Pivot"},
+		{"files", "Artifact/File Access"},
+		{"impact", "Impact Proof"},
+		{"objective", "Objective Control"},
+	}
+	lines := make([]string, 0, len(order)*2)
+	for _, item := range order {
+		ns := nodes[item.Key]
+		state := strings.ToUpper(strings.TrimSpace(ns.State))
+		if state == "" {
+			state = "OPEN"
+		}
+		tag := "[ ]"
+		if state == "PARTIAL" || state == "VERIFIED" || state == "PWNED" {
+			tag = "[~]"
+		}
+		if state == "PWNED" || state == "VERIFIED" {
+			tag = "[x]"
+		}
+		lines = append(lines, truncate(fmt.Sprintf("%s %s (%s)", tag, item.Label, state), width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderRunUnlocks(unlocks []telemetrypkg.Unlock, width int) string {
+	if len(unlocks) == 0 {
+		return "no unlock telemetry yet"
+	}
+	lines := make([]string, 0, len(unlocks))
+	for _, unlock := range unlocks {
+		tag := badgePill("LOCKED", "238", "250")
+		if unlock.Unlocked {
+			tag = badgePill("UNLOCKED", "34", "230")
+		}
+		lines = append(lines, wrap(tag+" "+unlock.Label+" :: "+unlock.Description, width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderQuestTracker(unlocks []telemetrypkg.Unlock, width int) string {
+	if len(unlocks) == 0 {
+		return wrap("quest log unavailable", width)
+	}
+	lines := []string{}
+	for _, unlock := range unlocks {
+		box := "[ ]"
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+		if unlock.Unlocked {
+			box = "[x]"
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+		}
+		lines = append(lines, style.Render(box+" "+unlock.Label))
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("    "+truncate(unlock.Description, max(12, width-6))))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderMissionGameCard(run telemetrypkg.RunState, width int) string {
+	opsec := clamp(run.Scores.Opsec, 0, 100)
+	pwn := clamp(run.Scores.Pwned, 0, 100)
+	lines := []string{
+		"╔══════════════ MISSION CORE ══════════════╗",
+		fmt.Sprintf("║ PHASE  %-31s║", padRight(strings.ToUpper(valueOr(run.Phase, "RECON")), 31)),
+		fmt.Sprintf("║ OPSEC  %-3d %s ║", opsec, padRight(progressBar(opsec, 10), 23)),
+		fmt.Sprintf("║ PWN    %-3d %s ║", pwn, padRight(progressBar(pwn, 10), 23)),
+		"╚═══════════════════════════════════════════╝",
+	}
+	if width < 44 {
+		return wrap(strings.Join([]string{
+			"phase=" + strings.ToUpper(valueOr(run.Phase, "RECON")),
+			"opsec=" + fmt.Sprintf("%d", opsec),
+			"pwn=" + fmt.Sprintf("%d", pwn),
+		}, " | "), width)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func padRight(v string, width int) string {
+	r := []rune(v)
+	if len(r) >= width {
+		return string(r[:width])
+	}
+	return string(r) + strings.Repeat(" ", width-len(r))
 }
 
 func severityBadge(severity string) string {
@@ -4526,6 +5462,25 @@ func valueOr(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+func sortedMapValues(items map[string]string, limit int) []string {
+	if len(items) == 0 || limit <= 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(items))
+	for key := range items {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) > limit {
+		keys = keys[len(keys)-limit:]
+	}
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, items[key])
+	}
+	return out
 }
 
 func defaultTargetSuggestion() string {
@@ -4678,6 +5633,127 @@ func shortTime(v string) string {
 		return truncate(v, 19)
 	}
 	return t.Local().Format("15:04:05")
+}
+
+func parseTimestamp(v string) time.Time {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func controlStatusState(raw string, busy bool) (string, string) {
+	msg := strings.TrimSpace(raw)
+	if busy && msg == "" {
+		return "RUNNING", "action in progress"
+	}
+	if msg == "" {
+		return "IDLE", "no action running"
+	}
+	lower := strings.ToLower(msg)
+	detail := msg
+	if parts := strings.SplitN(msg, "::", 2); len(parts) == 2 {
+		detail = strings.TrimSpace(parts[1])
+	}
+	switch {
+	case strings.Contains(lower, "running ::") || busy:
+		return "RUNNING", detail
+	case strings.HasPrefix(lower, "failed") || strings.Contains(lower, "preflight failed") || strings.Contains(lower, "invalid"):
+		return "ERROR", detail
+	case strings.Contains(lower, "warn") || strings.Contains(lower, "preflight-warn"):
+		return "WARN", detail
+	case strings.Contains(lower, "confirm required"):
+		return "CONFIRM", detail
+	case strings.HasPrefix(lower, "ok ::"):
+		return "READY", detail
+	default:
+		return "INFO", detail
+	}
+}
+
+func workflowLoopSummary(targetURL, lastAction string, busy bool, commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
+	steps := []struct {
+		Name   string
+		Done   bool
+		Active bool
+		Hint   string
+	}{
+		{Name: "Plan", Done: strings.TrimSpace(targetURL) != "", Hint: "set/verify target"},
+		{Name: "Execute", Done: len(commands) > 0, Active: busy, Hint: "run action"},
+		{Name: "Inspect", Done: len(findings) > 0 || len(loot) > 0, Hint: "inspect deltas"},
+		{Name: "Decide", Done: strings.TrimSpace(lastAction) != "", Hint: "choose next best"},
+	}
+	lines := make([]string, 0, len(steps))
+	activeIdx := -1
+	for idx, step := range steps {
+		if step.Active {
+			activeIdx = idx
+			break
+		}
+		if !step.Done && activeIdx == -1 {
+			activeIdx = idx
+		}
+	}
+	for idx, step := range steps {
+		marker := "[ ]"
+		switch {
+		case idx == activeIdx:
+			marker = "[>]"
+		case step.Done:
+			marker = "[x]"
+		}
+		line := fmt.Sprintf("%s %s", marker, step.Name)
+		if idx == activeIdx {
+			line += " :: " + step.Hint
+		}
+		lines = append(lines, line)
+	}
+	return wrap(strings.Join(lines, "  "), width)
+}
+
+func latestDeltaSummary(commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
+	if len(commands) == 0 {
+		return "run first action to collect deltas"
+	}
+	last := parseTimestamp(commands[len(commands)-1].Timestamp)
+	if last.IsZero() {
+		last = time.Now().Add(-30 * time.Second)
+	}
+	window := last.Add(-2 * time.Second)
+	deltaFindings := make([]findingEntry, 0, 3)
+	for _, item := range findings {
+		if ts := parseTimestamp(item.Timestamp); !ts.IsZero() && (ts.After(window) || ts.Equal(window)) {
+			deltaFindings = append(deltaFindings, item)
+			if len(deltaFindings) >= 3 {
+				break
+			}
+		}
+	}
+	deltaLoot := make([]lootEntry, 0, 3)
+	for _, item := range loot {
+		if ts := parseTimestamp(item.Timestamp); !ts.IsZero() && (ts.After(window) || ts.Equal(window)) {
+			deltaLoot = append(deltaLoot, item)
+			if len(deltaLoot) >= 3 {
+				break
+			}
+		}
+	}
+	lines := []string{
+		metricLine("new findings", fmt.Sprintf("%d", len(deltaFindings))),
+		metricLine("new loot", fmt.Sprintf("%d", len(deltaLoot))),
+	}
+	if len(deltaFindings) == 0 && len(deltaLoot) == 0 {
+		lines = append(lines, "no fresh deltas from latest action window")
+		return wrap(strings.Join(lines, " | "), width)
+	}
+	for _, item := range deltaFindings {
+		lines = append(lines, "+ finding :: "+truncate(item.Title, max(24, width-14)))
+	}
+	for _, item := range deltaLoot {
+		lines = append(lines, "+ loot :: "+truncate(item.Name, max(24, width-11)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderServices(services []serviceEntry) string {
@@ -5599,6 +6675,22 @@ func targetHostFromURL(targetURL string) string {
 	return parsed.Hostname()
 }
 
+func targetPortFromURL(targetURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(targetURL))
+	if err != nil {
+		return ""
+	}
+	if port := strings.TrimSpace(parsed.Port()); port != "" {
+		return port
+	}
+	switch strings.ToLower(strings.TrimSpace(parsed.Scheme)) {
+	case "https", "wss":
+		return "443"
+	default:
+		return "80"
+	}
+}
+
 func nextTipsForFinding(f findingEntry, targetURL string) []string {
 	base := strings.TrimSpace(targetURL)
 	host := targetHostFromURL(base)
@@ -6405,6 +7497,30 @@ func lootFollowupActions(item lootEntry, targetURL, root string) []controlAction
 	sourcePath := resolveLootSourcePath(root, item.Source)
 	achievementSignal := hasAchievementSignal(item, root)
 	actions := []controlAction{}
+	if pair := extractCredentialPairsFromLoot([]lootEntry{item}); len(pair) > 0 {
+		actions = append(actions, controlAction{
+			Label:       "Loot Action :: use-in AD creds",
+			Description: "Load credential pair into AD module inputs (ldapdomaindump/certipy/evil-winrm).",
+			Mode:        "internal",
+			Command:     "loot:use-in:ad-cred",
+		})
+	}
+	if token := lootJWTTokenFromItem(item); token != "" {
+		actions = append(actions, controlAction{
+			Label:       "Loot Action :: use-in JWT module",
+			Description: "Load token into JWT Tool module input for immediate audit.",
+			Mode:        "internal",
+			Command:     "loot:use-in:jwt-token",
+		})
+	}
+	if hashPath := lootHashFileCandidate(item, root); hashPath != "" {
+		actions = append(actions, controlAction{
+			Label:       "Loot Action :: use-in Crack hash file",
+			Description: "Load hash file path into Crack modules (hashcat/john).",
+			Mode:        "internal",
+			Command:     "loot:use-in:hash-file",
+		})
+	}
 	hints := extractDBHints(item, root)
 	for idx, hint := range hints {
 		if idx >= 2 {
@@ -6671,6 +7787,31 @@ func lootFollowupAction(item lootEntry, targetURL, root string) controlAction {
 		return controlAction{}
 	}
 	return actions[0]
+}
+
+func lootJWTTokenFromItem(item lootEntry) string {
+	meta := strings.TrimSpace(item.Preview + "\n" + item.Source + "\n" + item.Name)
+	if meta == "" {
+		return ""
+	}
+	re := regexp.MustCompile(`eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{8,}`)
+	return strings.TrimSpace(re.FindString(meta))
+}
+
+func lootHashFileCandidate(item lootEntry, root string) string {
+	kind := strings.ToLower(strings.TrimSpace(item.Kind))
+	meta := strings.ToLower(strings.TrimSpace(item.Kind + " " + item.Name + " " + item.Source + " " + item.Preview))
+	if kind != "hash" && !strings.Contains(meta, "hash") {
+		return ""
+	}
+	sourcePath := resolveLootSourcePath(root, item.Source)
+	if sourcePath == "" {
+		return ""
+	}
+	if _, err := os.Stat(sourcePath); err != nil {
+		return ""
+	}
+	return sourcePath
 }
 
 func lootOpsecAlert(action controlAction) string {
@@ -8788,12 +9929,16 @@ func countOnchainFlowArtifacts(loot []lootEntry) int {
 }
 
 type chainSnapshot struct {
-	Recon   bool
-	Breach  bool
-	Access  bool
-	Exfil   bool
-	Tamper  bool
-	PrivEsc bool
+	Recon        bool
+	Breach       bool
+	Access       bool
+	Exfil        bool
+	Tamper       bool
+	PrivEsc      bool
+	HashLoot     bool
+	CredLoot     bool
+	TokenLoot    bool
+	EndpointLoot bool
 }
 
 func deriveChainSnapshot(commands []commandEntry, findings []findingEntry, loot []lootEntry) chainSnapshot {
@@ -8854,13 +9999,18 @@ func deriveChainSnapshot(commands []commandEntry, findings []findingEntry, loot 
 			hasAnyCommand("initial-exploit", "api-probe", "sqlmap", "commix", "hydra", "auth") ||
 			lootHas("token"),
 		Access: hasAnyFinding("privilege", "access control", "unauthorized", "admin", "credential") ||
-			hasAnyCommand("post-enum", "enum", "ldapsearch", "smb", "rpcclient") ||
+			hasAnyCommand("post-enum", "enum", "ldapsearch", "smb", "rpcclient", "kerbrute", "evil-winrm", "ldapdomaindump", "certipy") ||
 			lootHas("credential") || lootHas("token") || lootHas("hash"),
 		Exfil: lootCountByKinds("backup", "document", "binary", "token", "credential", "hash", "artifact", "database") > 0,
 		Tamper: hasAnyFinding("tamper", "integrity", "modify", "destructive") ||
 			hasAnyCommand(" put ", " patch ", " delete ", "full-chain"),
 		PrivEsc: hasPhase("post-enum") || hasPhase("password") || hasPhase("privesc") ||
-			hasAnyFinding("privesc", "privilege escalation") || hasAnyCommand("linpeas", "winpeas", "searchsploit"),
+			hasAnyFinding("privesc", "privilege escalation", "ad cs", "certificate template") ||
+			hasAnyCommand("linpeas", "winpeas", "searchsploit", "certipy", "evil-winrm"),
+		HashLoot:     lootHas("hash"),
+		CredLoot:     lootHas("credential"),
+		TokenLoot:    lootHas("token"),
+		EndpointLoot: lootHas("endpoint"),
 	}
 }
 
@@ -9157,6 +10307,89 @@ func exploitGamificationMechanics(commands []commandEntry, findings []findingEnt
 	return wrap(strings.Join(lines, " | "), width)
 }
 
+func laneMissionQuests(lane string, commands []commandEntry, findings []findingEntry, loot []lootEntry) []missionQuest {
+	s := deriveChainSnapshot(commands, findings, loot)
+	switch strings.ToLower(strings.TrimSpace(lane)) {
+	case "web-adv":
+		return []missionQuest{
+			{Name: "Surface Mapper", Step: "katana/gau/wayback corpus", Unlocked: hasCommandMatch(commands, "katana") || hasCommandMatch(commands, "gau") || hasCommandMatch(commands, "waybackurls"), Hint: "run WEB-ADV crawl/history modules"},
+			{Name: "Reflection Hunter", Step: "kxss/dalfox validation", Unlocked: hasCommandMatch(commands, "kxss") || hasCommandMatch(commands, "dalfox"), Hint: "run WEB-ADV reflection/XSS modules"},
+			{Name: "Token Analyzer", Step: "jwt audit", Unlocked: hasCommandMatch(commands, "jwt-tool"), Hint: "use LOOT token -> JWT module then run"},
+			{Name: "API Boundary", Step: "api probe follow-up", Unlocked: hasCommandMatch(commands, "api-probe") || s.Breach, Hint: "run API probe or exploit boundary validation"},
+		}
+	case "ad":
+		return []missionQuest{
+			{Name: "Kerberos Enum", Step: "kerbrute userenum", Unlocked: hasCommandMatch(commands, "kerbrute"), Hint: "enumerate valid users first"},
+			{Name: "Directory Graph", Step: "ldapdomaindump collection", Unlocked: hasCommandMatch(commands, "ldapdomaindump"), Hint: "load creds from LOOT then collect LDAP map"},
+			{Name: "AD CS Path", Step: "certipy vulnerable templates", Unlocked: hasCommandMatch(commands, "certipy"), Hint: "check AD CS escalation paths"},
+			{Name: "Remote Exec Proof", Step: "evil-winrm whoami", Unlocked: hasCommandMatch(commands, "evil-winrm"), Hint: "validate command execution path"},
+		}
+	case "k8s":
+		return []missionQuest{
+			{Name: "Remote Probe", Step: "kube-hunter scan", Unlocked: hasCommandMatch(commands, "kube-hunter"), Hint: "scan exposed cluster perimeter"},
+			{Name: "Config Risk", Step: "trivy k8s audit", Unlocked: hasCommandMatch(commands, "trivy k8s"), Hint: "run cluster misconfig audit"},
+			{Name: "Hardening Gap", Step: "kubescape framework scan", Unlocked: hasCommandMatch(commands, "kubescape"), Hint: "collect benchmark delta"},
+			{Name: "Evidence Freeze", Step: "snapshot/report", Unlocked: hasCommandMatch(commands, "telemetryctl.py snapshot"), Hint: "snapshot after posture run"},
+		}
+	case "crack":
+		return []missionQuest{
+			{Name: "Hash Corpus", Step: "loot hash material", Unlocked: s.HashLoot || hasLootMatch(loot, "hash"), Hint: "collect hash artifacts into loot"},
+			{Name: "Hashcat Pass", Step: "dictionary crack", Unlocked: hasCommandMatch(commands, "hashcat"), Hint: "run hashcat module with hash file"},
+			{Name: "John Pass", Step: "secondary crack pass", Unlocked: hasCommandMatch(commands, "john --wordlist"), Hint: "run john module for coverage"},
+			{Name: "Credential Pivot", Step: "validated credential use", Unlocked: s.CredLoot || hasLootMatch(loot, "credential"), Hint: "use cracked creds in ACCESS/AD lane"},
+		}
+	default:
+		return []missionQuest{
+			{Name: "Recon", Step: "surface discovery", Unlocked: s.Recon, Hint: "run prelim/surface-map"},
+			{Name: "Breach", Step: "boundary break", Unlocked: s.Breach, Hint: "run api-probe/initial-exploit"},
+			{Name: "Access", Step: "credential/token foothold", Unlocked: s.Access, Hint: "prove privileged access"},
+			{Name: "Objective", Step: "impact + evidence", Unlocked: s.Tamper || s.Exfil, Hint: "capture impact and snapshot evidence"},
+		}
+	}
+}
+
+func laneQuestBoard(lane string, commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
+	quests := laneMissionQuests(lane, commands, findings, loot)
+	if len(quests) == 0 {
+		return "no lane quests available"
+	}
+	done := 0
+	lines := []string{}
+	nextHint := ""
+	for i, q := range quests {
+		if q.Unlocked {
+			done++
+		}
+		badge := statusBadge(ternary(q.Unlocked, "done", "idle"))
+		lines = append(lines, fmt.Sprintf("%s Q%d %s :: %s", badge, i+1, q.Name, q.Step))
+		if nextHint == "" && !q.Unlocked {
+			nextHint = q.Hint
+		}
+	}
+	lines = append([]string{metricLine("lane", strings.ToUpper(ternary(strings.TrimSpace(lane) == "", "generic", lane))), metricLine("progress", fmt.Sprintf("%d/%d %s", done, len(quests), progressBar((done*100)/len(quests), 8)))}, lines...)
+	if nextHint != "" {
+		lines = append(lines, "next unlock :: "+nextHint)
+	}
+	return wrap(strings.Join(lines, " | "), width)
+}
+
+func campaignGradeCard(commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
+	ratings := exploitCampaignRatings(commands, findings, loot)
+	stats := exploitMissionMetrics(commands, findings, loot)
+	achUnlocked, achTotal, achPoints := exploitAchievementTotals(exploitAchievements(commands, findings, loot))
+	completion := stats.ProgressPct
+	evidenceQuality := clamp(min(100, len(loot)*4+countSeverity(findings, "high")*6+countSeverity(findings, "critical")*10), 0, 100)
+	final := clamp((ratings.PwnedScore*45+ratings.OpsecScore*35+completion*10+evidenceQuality*10)/100, 0, 100)
+	lines := []string{
+		metricLine("final grade", fmt.Sprintf("%s (%d/100)", scoreGrade(final), final)),
+		metricLine("pwn/opsec", fmt.Sprintf("%d/%d", ratings.PwnedScore, ratings.OpsecScore)),
+		metricLine("completion", fmt.Sprintf("%d%%", completion)),
+		metricLine("evidence", fmt.Sprintf("%d/100", evidenceQuality)),
+		metricLine("achievements", fmt.Sprintf("%d/%d (+%d)", achUnlocked, achTotal, achPoints)),
+	}
+	return wrap(strings.Join(lines, " | "), width)
+}
+
 func scoreGrade(score int) string {
 	score = clamp(score, 0, 100)
 	switch {
@@ -9189,10 +10422,11 @@ func ratingDeltasFromMeta(meta string) (int, int, string) {
 	hasAuth := match("authorization", "bearer", "token", "jwt", " -u ", "username=", "password", "login", "auth", "apikey", "api-key", "cookie")
 	hasMutation := match(" put ", " patch ", " delete ", " update ", " insert ", " drop ", " alter ", " create ", "-x put", "-x patch", "-x delete", "--data ", " --data ")
 	hasAggressive := match("brute", "spray", "fuzz", "burst", "wordlist", "crawl=", "threads", "parallel", "xargs -p", "for ")
-	hasExploit := match("exploit", "payload", "inject", "sqli", "rce", "xss", "ssrf", "traversal", "idor", "command injection")
+	hasExploit := match("exploit", "payload", "inject", "sqli", "rce", "xss", "ssrf", "traversal", "idor", "command injection", "dalfox", "kxss")
 	hasExfil := match("dump", "backup", "exfil", "export", "download", "artifact", "collection", "record", "snapshot", "pg_dump", "mysqldump", "sqlite3")
-	hasDiscovery := match("recon", "enumeration", "enum", "discover", "openapi", "surface-map", "web-enum", "api-probe", "scan", "probe", "fingerprint", "list")
+	hasDiscovery := match("recon", "enumeration", "enum", "discover", "openapi", "surface-map", "web-enum", "api-probe", "scan", "probe", "fingerprint", "list", "katana", "gau ", "waybackurls", "kube-hunter", "trivy k8s", "kubescape", "kerbrute")
 	hasPassive := match("curl -ssi", "curl -ss", "curl -i", "head ", "options ", "show", "inspect", "cat ", "jq ", "sed -n", "grep ", "awk ")
+	hasOfflineCrack := match("hashcat", "john --wordlist", "password-attacks")
 	switch {
 	case strings.TrimSpace(meta) == "":
 		return 0, 0, "neutral"
@@ -9205,6 +10439,8 @@ func ratingDeltasFromMeta(meta string) (int, int, string) {
 		return 0, 0, "control"
 	case match("telemetryctl.py snapshot", "telemetryctl.py show", "snapshot", "report export"):
 		return 1, 1, "evidence"
+	case hasOfflineCrack:
+		return 5, 2, "crack"
 	case hasMutation:
 		return 7, 9, "mutation"
 	case hasAuth && hasAggressive:
@@ -9377,11 +10613,71 @@ func actionEffectiveOpsecScore(action controlAction, commands []commandEntry) in
 }
 
 func exploitNextBestAction(commands []commandEntry, findings []findingEntry, loot []lootEntry, targetURL string) (string, int) {
+	return exploitNextBestActionForLane("", commands, findings, loot, targetURL)
+}
+
+func exploitNextBestActionForLane(lane string, commands []commandEntry, findings []findingEntry, loot []lootEntry, targetURL string) (string, int) {
 	target := strings.TrimSpace(targetURL)
 	if target == "" {
 		return "set target url from CTRL TARGET before firing exploit pipelines", 95
 	}
 	s := deriveChainSnapshot(commands, findings, loot)
+	switch strings.ToLower(strings.TrimSpace(lane)) {
+	case "web-adv":
+		switch {
+		case !s.Recon:
+			return "python3 ./scripts/security_pipeline.py --target " + target + " --pipeline surface-map", 88
+		case !s.EndpointLoot && !hasCommandMatch(commands, "katana") && !hasCommandMatch(commands, "gau") && !hasCommandMatch(commands, "waybackurls"):
+			return "run FIRE lane WEB-ADV :: [MODULE] Katana Surface Crawl", 86
+		case !hasCommandMatch(commands, "dalfox") && !hasCommandMatch(commands, "kxss"):
+			return "run FIRE lane WEB-ADV :: [MODULE] Dalfox URL XSS Scan", 82
+		case s.TokenLoot && !hasCommandMatch(commands, "jwt-tool"):
+			return "run FIRE lane WEB-ADV :: [MODULE] JWT Tool Header Audit", 79
+		default:
+			return "python3 ./scripts/security_pipeline.py --target " + target + " --pipeline api-probe", 72
+		}
+	case "ad":
+		switch {
+		case !s.Recon:
+			return "python3 ./scripts/security_pipeline.py --target " + target + " --pipeline surface-map", 86
+		case !s.CredLoot:
+			return "python3 ./scripts/security_pipeline.py --target " + target + " --pipeline password-attacks", 83
+		case !hasCommandMatch(commands, "kerbrute"):
+			return "run FIRE lane AD :: [MODULE] Kerbrute User Enum", 81
+		case !hasCommandMatch(commands, "ldapdomaindump"):
+			return "run FIRE lane AD :: [MODULE] LDAP Domain Dump", 78
+		case !hasCommandMatch(commands, "certipy"):
+			return "run FIRE lane AD :: [MODULE] Certipy AD CS Find", 76
+		default:
+			return "run FIRE lane AD :: [MODULE] Evil-WinRM Command Check", 73
+		}
+	case "k8s":
+		switch {
+		case !s.Recon:
+			return "python3 ./scripts/security_pipeline.py --target " + target + " --pipeline surface-map", 85
+		case !hasCommandMatch(commands, "kube-hunter"):
+			return "run FIRE lane K8S :: [MODULE] Kube-Hunter Remote Scan", 82
+		case !hasCommandMatch(commands, "trivy k8s"):
+			return "run FIRE lane K8S :: [MODULE] Trivy K8s Audit", 78
+		case !hasCommandMatch(commands, "kubescape"):
+			return "run FIRE lane K8S :: [MODULE] Kubescape NSA Framework Scan", 76
+		default:
+			return "python3 ./scripts/telemetryctl.py snapshot --name k8s-posture-evidence", 71
+		}
+	case "crack":
+		switch {
+		case !s.HashLoot:
+			return "collect hash artifacts first (post-enum/password-attacks) then return to CRACK lane", 89
+		case !hasCommandMatch(commands, "hashcat"):
+			return "run FIRE lane CRACK :: [MODULE] Hashcat Dictionary Attack", 84
+		case !hasCommandMatch(commands, "john --wordlist"):
+			return "run FIRE lane CRACK :: [MODULE] John Wordlist Attack", 80
+		case !s.CredLoot:
+			return "continue CRACK lane and validate recovered credentials in ACCESS/AD lanes", 76
+		default:
+			return "run FIRE lane AD with validated creds to confirm privilege path", 72
+		}
+	}
 	switch {
 	case !s.Recon:
 		return "python3 ./scripts/security_pipeline.py --target " + target + " --pipeline surface-map", 88
@@ -9398,16 +10694,24 @@ func exploitNextBestAction(commands []commandEntry, findings []findingEntry, loo
 	}
 }
 
-func nextBestActionCard(commands []commandEntry, findings []findingEntry, loot []lootEntry, targetURL string, width int) string {
-	command, confidence := exploitNextBestAction(commands, findings, loot, targetURL)
+func nextBestActionCardForLane(lane string, commands []commandEntry, findings []findingEntry, loot []lootEntry, targetURL string, width int) string {
+	command, confidence := exploitNextBestActionForLane(lane, commands, findings, loot, targetURL)
+	headerLane := "GENERIC"
+	if strings.TrimSpace(lane) != "" {
+		headerLane = strings.ToUpper(strings.TrimSpace(lane))
+	}
 	lines := []string{
 		"+---------------- NEXT ACTION ----------------+",
-		"| mission AI: select highest-yield chain step |",
+		"| mission AI (" + truncate(headerLane, 9) + "): select highest-yield step |",
 		"| confidence: " + fmt.Sprintf("%d%%", confidence) + strings.Repeat(" ", max(0, 13-len(fmt.Sprintf("%d%%", confidence)))) + "                      |",
 		"+---------------------------------------------+",
 		"> " + truncate(command, max(24, width-4)),
 	}
 	return wrap(strings.Join(lines, "\n"), width)
+}
+
+func nextBestActionCard(commands []commandEntry, findings []findingEntry, loot []lootEntry, targetURL string, width int) string {
+	return nextBestActionCardForLane("", commands, findings, loot, targetURL, width)
 }
 
 func exploitAttackDegreeMap(commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
@@ -11481,6 +12785,18 @@ func (m *model) triggerControlAction() tea.Cmd {
 		m.applyInternalAction(action)
 		return nil
 	}
+	previewKey := controlActionPreviewKey(action)
+	if !m.controlPreviewArmed || m.controlPreviewKey != previewKey {
+		m.controlPreviewArmed = true
+		m.controlPreviewKey = previewKey
+		m.controlPreviewText = m.renderControlActionPreview(action)
+		m.controlStatus = "preview armed :: Enter/f again to execute"
+		m.controlOutcome = "idle"
+		m.controlUntil = time.Now().Add(2200 * time.Millisecond)
+		return nil
+	}
+	m.controlPreviewArmed = false
+	m.controlPreviewKey = ""
 	if isNewCampaignAction(action) && !m.confirmNewCampaign {
 		m.confirmNewCampaign = true
 		m.controlStatus = "confirm required :: press Enter/f again to start new campaign"
@@ -11637,35 +12953,7 @@ func (m model) filterUnsupportedKaliActions(actions []controlAction) []controlAc
 	if len(actions) == 0 {
 		return actions
 	}
-	if !kaliRuntimeRunningCached(kaliContainerName()) {
-		return actions
-	}
-	filtered := make([]controlAction, 0, len(actions))
-	for _, action := range actions {
-		if !strings.EqualFold(strings.TrimSpace(action.Mode), "kali") {
-			filtered = append(filtered, action)
-			continue
-		}
-		requiredTool := m.requiredKaliTool(action)
-		if strings.TrimSpace(requiredTool) == "" {
-			filtered = append(filtered, action)
-			continue
-		}
-		if available, _ := kaliToolAvailableCached(kaliContainerName(), requiredTool); available {
-			filtered = append(filtered, action)
-		}
-	}
-	if len(filtered) == 0 {
-		return []controlAction{
-			{
-				Label:       "No Runnable FIRE Commands",
-				Description: "No compatible Kali commands found for this mode/group. Check runtime toolchain.",
-				Mode:        "internal",
-				Command:     "noop",
-			},
-		}
-	}
-	return filtered
+	return actions
 }
 
 func (m model) activeControlIndex() int {
@@ -11918,6 +13206,7 @@ func (m model) renderModuleTemplate(template string, moduleInputs map[string]str
 	targetURL := strings.TrimSpace(m.effectiveExploitTargetURL())
 	targetBase := strings.TrimRight(targetURL, "/")
 	targetHost := targetHostFromURL(targetURL)
+	targetPort := targetPortFromURL(targetURL)
 	dockerTarget := strings.TrimSpace(m.state.DockerTarget)
 	if dockerTarget == "" {
 		dockerTarget = targetURL
@@ -11927,6 +13216,7 @@ func (m model) renderModuleTemplate(template string, moduleInputs map[string]str
 		"{{target_url}}", targetURL,
 		"{{target_base}}", targetBase,
 		"{{target_host}}", targetHost,
+		"{{target_port}}", targetPort,
 		"{{docker_target}}", dockerTarget,
 		"{{osint_seed}}", strings.TrimSpace(m.osintTargetInput),
 		"{{onchain_target}}", strings.TrimSpace(m.onchainTargetInput),
@@ -12086,6 +13376,8 @@ func pipelineRequirements(name string) []string {
 		return []string{"access"}
 	case "privesc":
 		return []string{"access"}
+	case "lateral-pivot":
+		return []string{"access"}
 	case "full-escalation":
 		return []string{"breach"}
 	case "full-chain":
@@ -12100,8 +13392,12 @@ func pipelineNamesForFireGroup(group string) []string {
 	mapping := map[string][]string{
 		"recon":     {"prelim", "surface-map", "web-enum", "vuln-sweep", "api-probe"},
 		"surface":   {"surface-map", "web-enum", "vuln-sweep", "api-probe"},
+		"web-adv":   {"web-enum", "surface-map", "api-probe", "vuln-sweep"},
 		"exploit":   {"api-probe", "initial-exploit", "vuln-sweep"},
 		"access":    {"password-attacks", "initial-exploit", "api-probe"},
+		"ad":        {"post-enum", "password-attacks", "privesc", "lateral-pivot", "full-escalation"},
+		"k8s":       {"surface-map", "vuln-sweep", "api-probe"},
+		"crack":     {"password-attacks", "post-enum", "full-escalation"},
 		"privilege": {"post-enum", "password-attacks", "privesc", "full-escalation"},
 		"objective": {"full-chain", "initial-exploit", "privesc"},
 	}
@@ -12701,7 +13997,7 @@ func (m model) coopFireActions() []controlAction {
 }
 
 func exploitFireGroups() []string {
-	return []string{"Recon", "Surface", "Exploit", "Access", "Privilege", "Objective", "Utility", "Modules", "Custom"}
+	return []string{"Recon", "Surface", "Web-Adv", "Exploit", "Access", "AD", "K8S", "Crack", "Privilege", "Objective", "Utility", "Modules", "Custom"}
 }
 
 func (m model) selectedExploitFireGroup() string {
@@ -12710,6 +14006,18 @@ func (m model) selectedExploitFireGroup() string {
 		return "Recon"
 	}
 	return groups[clamp(m.exploitFireGroupIdx, 0, len(groups)-1)]
+}
+
+func (m *model) setExploitFireGroupByName(name string) {
+	groups := exploitFireGroups()
+	for idx, group := range groups {
+		if strings.EqualFold(strings.TrimSpace(group), strings.TrimSpace(name)) {
+			m.exploitFireGroupIdx = idx
+			m.exploitPipelineMenu = false
+			m.fireIdx = 0
+			return
+		}
+	}
 }
 
 func requirementReady(req string, snap chainSnapshot) bool {
@@ -12726,6 +14034,14 @@ func requirementReady(req string, snap chainSnapshot) bool {
 		return snap.Tamper
 	case "privesc":
 		return snap.PrivEsc
+	case "loot-hash":
+		return snap.HashLoot
+	case "loot-credential":
+		return snap.CredLoot
+	case "loot-token":
+		return snap.TokenLoot
+	case "loot-endpoint":
+		return snap.EndpointLoot
 	default:
 		return true
 	}
@@ -12775,6 +14091,9 @@ func (m model) kaliPreflight(action controlAction) (bool, string) {
 func (m *model) preflightControlAction(action controlAction) (bool, string) {
 	if action.Mode == "internal" {
 		return true, ""
+	}
+	if !m.unsafeMode && isUnsafeControlAction(action) {
+		return false, "unsafe action blocked (press U to enable unsafe mode)"
 	}
 	warning := ""
 	if strings.TrimSpace(action.ModuleID) != "" {
@@ -12834,6 +14153,20 @@ func (m *model) preflightControlAction(action controlAction) (bool, string) {
 		return true, warning
 	}
 	return true, warning
+}
+
+func isUnsafeControlAction(action controlAction) bool {
+	meta := strings.ToLower(strings.TrimSpace(action.Label + " " + action.Command + " " + action.KaliShell + " " + action.ActionID))
+	unsafeMarkers := []string{
+		"delete", "drop ", "truncate", "tamper", "write", "patch ", "put ", "post ", "update ", "remove ",
+		"privesc", "privilege", "smbexec", "wmiexec",
+	}
+	for _, marker := range unsafeMarkers {
+		if strings.Contains(meta, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func requiresCoopAPIRuntime(action controlAction) bool {
@@ -13251,6 +14584,36 @@ func (m model) exploitFireActions() []controlAction {
 			Command:     "fire:pipelines:open",
 			Group:       group,
 		})
+		actions = append(actions,
+			controlAction{
+				Label:       "[INTENT] Surface Expansion",
+				Description: "Jump fire group to SURFACE discovery path.",
+				Mode:        "internal",
+				Command:     "intent:set:surface",
+				Group:       group,
+			},
+			controlAction{
+				Label:       "[INTENT] Foothold",
+				Description: "Jump fire group to EXPLOIT path for foothold attempts.",
+				Mode:        "internal",
+				Command:     "intent:set:exploit",
+				Group:       group,
+			},
+			controlAction{
+				Label:       "[INTENT] Credential/Access",
+				Description: "Jump fire group to ACCESS path.",
+				Mode:        "internal",
+				Command:     "intent:set:access",
+				Group:       group,
+			},
+			controlAction{
+				Label:       "[INTENT] Objective",
+				Description: "Jump fire group to OBJECTIVE path.",
+				Mode:        "internal",
+				Command:     "intent:set:objective",
+				Group:       group,
+			},
+		)
 	}
 	if strings.EqualFold(group, "Custom") {
 		actions = append(actions, m.customFireActions("exploit")...)
@@ -13919,6 +15282,18 @@ func (m *model) applyInternalAction(action controlAction) {
 			m.firePipelineIdx = (m.firePipelineIdx + len(names) - 1) % len(names)
 			m.controlStatus = "ok :: pipeline -> " + selectedPipelineLabel(m.selectedPipelineName())
 		}
+	case "intent:set:surface":
+		m.setExploitFireGroupByName("Surface")
+		m.controlStatus = "intent selected :: SURFACE"
+	case "intent:set:exploit":
+		m.setExploitFireGroupByName("Exploit")
+		m.controlStatus = "intent selected :: EXPLOIT"
+	case "intent:set:access":
+		m.setExploitFireGroupByName("Access")
+		m.controlStatus = "intent selected :: ACCESS"
+	case "intent:set:objective":
+		m.setExploitFireGroupByName("Objective")
+		m.controlStatus = "intent selected :: OBJECTIVE"
 	case "custom:edit":
 		m.manualTargetMode = true
 		m.manualTargetKind = "custom-command"
@@ -14393,6 +15768,92 @@ func (m *model) submitManualCustomCommand() tea.Cmd {
 	return nil
 }
 
+func (m *model) submitManualOperatorNote() tea.Cmd {
+	note := strings.TrimSpace(m.manualTargetInput)
+	if note == "" {
+		m.controlStatus = "operator note is empty"
+		return nil
+	}
+	m.operatorNotes = append(m.operatorNotes, time.Now().Format("15:04:05")+" "+note)
+	if len(m.operatorNotes) > 64 {
+		m.operatorNotes = m.operatorNotes[len(m.operatorNotes)-64:]
+	}
+	m.manualTargetMode = false
+	m.controlStatus = "ok :: operator note added"
+	m.controlOutcome = "success"
+	m.controlUntil = time.Now().Add(1600 * time.Millisecond)
+	return nil
+}
+
+func (m *model) startOperatorNoteInput() {
+	m.manualTargetMode = true
+	m.manualTargetKind = "operator-note"
+	m.manualTargetInput = ""
+	m.controlStatus = "operator note input active :: type note and press Enter"
+}
+
+func (m *model) pinCurrentSelection() {
+	switch m.tab {
+	case 2:
+		if len(m.findings) == 0 || m.findingIdx < 0 || m.findingIdx >= len(m.findings) {
+			m.controlStatus = "pin skipped :: no finding selected"
+			return
+		}
+		f := m.findings[m.findingIdx]
+		key := "finding::" + strings.ToLower(strings.TrimSpace(f.Title+"|"+f.Endpoint))
+		m.operatorPins[key] = shortTime(f.Timestamp) + " :: " + f.Title + " :: " + truncate(f.Endpoint, 64)
+		m.controlStatus = "pinned finding :: " + truncate(f.Title, 52)
+	case 3:
+		if len(m.loot) == 0 || m.lootIdx < 0 || m.lootIdx >= len(m.loot) {
+			m.controlStatus = "pin skipped :: no loot selected"
+			return
+		}
+		l := m.loot[m.lootIdx]
+		key := "loot::" + strings.ToLower(strings.TrimSpace(l.Name+"|"+l.Source))
+		m.operatorPins[key] = shortTime(l.Timestamp) + " :: " + l.Name + " :: " + truncate(l.Source, 64)
+		m.controlStatus = "pinned loot :: " + truncate(l.Name, 52)
+	default:
+		m.controlStatus = "pin action available in PWNED/LOOT panels"
+	}
+	m.controlOutcome = "idle"
+	m.controlUntil = time.Now().Add(1500 * time.Millisecond)
+}
+
+func (m *model) handoffToArchMap() {
+	if !strings.EqualFold(strings.TrimSpace(m.fireMode), "exploit") {
+		m.controlStatus = "arch handoff available in exploit mode"
+		return
+	}
+	prevTab := m.tab
+	m.tab = 0
+	m.archMapMode = true
+	m.archMapTreeFocus = true
+	needle := ""
+	if prevTab == 2 && len(m.findings) > 0 && m.findingIdx >= 0 && m.findingIdx < len(m.findings) {
+		needle = strings.TrimSpace(m.findings[m.findingIdx].Endpoint)
+	}
+	if prevTab == 3 && len(m.loot) > 0 && m.lootIdx >= 0 && m.lootIdx < len(m.loot) {
+		needle = strings.TrimSpace(m.loot[m.lootIdx].Source)
+	}
+	nodes := m.exploitGraphNodes()
+	if strings.TrimSpace(needle) != "" && len(nodes) > 0 {
+		n := strings.ToLower(needle)
+		best := -1
+		for idx, node := range nodes {
+			meta := strings.ToLower(node.Ref + " " + node.Label + " " + node.Detail)
+			if strings.Contains(meta, n) {
+				best = idx
+				break
+			}
+		}
+		if best >= 0 {
+			m.archGraphIdx = best
+		}
+	}
+	m.commandDetailScroll = 0
+	m.controlStatus = "ok :: handoff to ARCH map"
+}
+
 func (m *model) submitManualInnerTarget() tea.Cmd {
 	target := strings.TrimSpace(m.manualTargetInput)
 	if target == "" {
@@ -14604,6 +16065,25 @@ func appendCommandJSONL(path string, entry commandEntry) error {
 	return nil
 }
 
+func appendRuntimeEventJSONL(path string, event telemetrypkg.Event) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(append(encoded, '\n')); err != nil {
+		return err
+	}
+	return nil
+}
+
 func startTelemetryCommand(root, phase string, action controlAction, commandText string) (string, string, time.Time) {
 	started := time.Now().UTC()
 	commandID := fmt.Sprintf("tui-%d", started.UnixNano())
@@ -14657,6 +16137,33 @@ func finishTelemetryCommand(root, commandID, phase, tool, commandText string, st
 		OutputPreview: telemetryCommandPreview(output),
 	}
 	_ = appendCommandJSONL(filepath.Join(root, "telemetry", "commands.jsonl"), event)
+	lane := inferTelemetryLane(event.Phase, tool, commandText)
+	runtimeEvent := telemetrypkg.Event{
+		Timestamp:  time.Now().UTC(),
+		RunID:      valueOr(filepath.Base(detectTelemetryDir(root)), "live"),
+		Mode:       normalizeMode(event.Phase),
+		Lane:       lane,
+		ActionID:   valueOr(strings.TrimSpace(action.ActionID), strings.TrimSpace(action.Label)),
+		TargetRef:  strings.TrimSpace(targetRefFromCommand(commandText)),
+		Command:    strings.TrimSpace(commandText),
+		Status:     status,
+		Confidence: actionOutputConfidence(output, err),
+		OpsecDelta: commandOpsecDeltaFromEntry(event),
+		PwnDelta:   commandPwnDeltaFromEntry(event),
+		Meta: map[string]string{
+			"phase": event.Phase,
+			"tool":  tool,
+		},
+	}
+	_ = appendRuntimeEventJSONL(filepath.Join(root, "telemetry", "events.jsonl"), runtimeEvent)
+}
+
+func targetRefFromCommand(command string) string {
+	re := regexp.MustCompile(`https?://[^\s'"` + "`" + `]+`)
+	if match := re.FindString(command); strings.TrimSpace(match) != "" {
+		return strings.TrimSpace(match)
+	}
+	return ""
 }
 
 func (m *model) submitLootAction() tea.Cmd {
@@ -14684,6 +16191,19 @@ func (m *model) submitLootAction() tea.Cmd {
 	}
 	m.lootActionIdx = clamp(m.lootActionIdx, 0, len(actions)-1)
 	action := actions[m.lootActionIdx]
+	if strings.EqualFold(strings.TrimSpace(action.Mode), "internal") {
+		ok, msg := m.applyLootInternalAction(action)
+		m.lootFireBusy = false
+		if ok {
+			m.lootFireStatus = "ok :: " + truncate(msg, 72)
+			m.lootFireOutcome = "success"
+		} else {
+			m.lootFireStatus = "failed :: " + truncate(msg, 72)
+			m.lootFireOutcome = "failed"
+		}
+		m.lootFireUntil = time.Now().Add(1800 * time.Millisecond)
+		return nil
+	}
 	if action.Command == "" || (action.Mode != "kali" && len(action.Args) == 0) {
 		m.lootFireBusy = false
 		m.lootFireStatus = "failed :: no mapped command for this loot item"
@@ -14697,6 +16217,55 @@ func (m *model) submitLootAction() tea.Cmd {
 	m.lootFireOutput = ""
 	m.lootFireOutcome = "running"
 	return lootCmd(m.root, action)
+}
+
+func (m *model) applyLootInternalAction(action controlAction) (bool, string) {
+	if m.lootIdx < 0 || m.lootIdx >= len(m.loot) {
+		return false, "no loot item selected"
+	}
+	item := m.loot[m.lootIdx]
+	switch strings.ToLower(strings.TrimSpace(action.Command)) {
+	case "loot:use-in:jwt-token":
+		token := lootJWTTokenFromItem(item)
+		if token == "" {
+			token = strings.TrimSpace(latestTokenFromTelemetry(m.root))
+		}
+		if token == "" {
+			return false, "no JWT token found in selected loot"
+		}
+		m.moduleInputValues[m.moduleInputStorageKey("webadv-jwt-tool-audit", "token")] = token
+		return true, "loaded JWT into WEB-ADV module input"
+	case "loot:use-in:hash-file":
+		hashPath := lootHashFileCandidate(item, m.root)
+		if hashPath == "" {
+			return false, "no local hash file path resolved from loot"
+		}
+		m.moduleInputValues[m.moduleInputStorageKey("crack-hashcat-dictionary", "hash_file")] = hashPath
+		m.moduleInputValues[m.moduleInputStorageKey("crack-john-wordlist", "hash_file")] = hashPath
+		return true, "loaded hash file into CRACK module inputs"
+	case "loot:use-in:ad-cred":
+		pairs := extractCredentialPairsFromLoot([]lootEntry{item})
+		if len(pairs) == 0 {
+			return false, "no credential pair parsed from selected loot"
+		}
+		user := strings.TrimSpace(pairs[0].User)
+		pass := strings.TrimSpace(pairs[0].Pass)
+		if user == "" || pass == "" {
+			return false, "parsed credential pair is incomplete"
+		}
+		targets := []string{
+			"ad-ldapdomaindump-collection",
+			"ad-certipy-find",
+			"ad-evilwinrm-command-check",
+		}
+		for _, mod := range targets {
+			m.moduleInputValues[m.moduleInputStorageKey(mod, "user")] = user
+			m.moduleInputValues[m.moduleInputStorageKey(mod, "password")] = pass
+		}
+		return true, "loaded credential pair into AD module inputs"
+	default:
+		return false, "unsupported internal loot action"
+	}
 }
 
 func lootCmd(root string, action controlAction) tea.Cmd {

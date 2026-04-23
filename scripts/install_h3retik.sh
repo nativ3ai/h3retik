@@ -38,6 +38,7 @@ copy_items=(
   "go.sum"
   "assets"
   "cmd"
+  "internal"
   "docs"
   "kali-headless"
   "modules"
@@ -70,7 +71,7 @@ export H3RETIK_ROOT="$INSTALL_ROOT"
 exec "$INSTALL_ROOT/h3retik" "\$@"
 EOF
 chmod +x "$LAUNCHER"
-chmod +x "$INSTALL_ROOT/h3retik" "$INSTALL_ROOT/scripts/start_lab.sh" "$INSTALL_ROOT/scripts/reset_lab.sh" "$INSTALL_ROOT/scripts/install_h3retik.sh"
+chmod +x "$INSTALL_ROOT/h3retik" "$INSTALL_ROOT/scripts/start_lab.sh" "$INSTALL_ROOT/scripts/reset_lab.sh" "$INSTALL_ROOT/scripts/install_h3retik.sh" "$INSTALL_ROOT/scripts/setup_wizard.sh"
 
 if command -v go >/dev/null 2>&1; then
   (cd "$INSTALL_ROOT" && ./h3retik build >/dev/null)
