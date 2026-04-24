@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+home="${COOP_WILDMESH_HOME:-/artifacts/coop/wildmesh-node}"
+
+command -v wildmesh >/dev/null 2>&1 || {
+  echo "[coop][wildmesh] binary missing: wildmesh" >&2
+  exit 127
+}
+
+wildmesh discover-now --home "$home"
+
+echo ""
+wildmesh browse --home "$home" --json || true

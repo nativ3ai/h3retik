@@ -59,7 +59,7 @@ summary="/artifacts/onchain/address-flow-${safe}.txt"
 
 python3 - "$address" "$rpc_list" "$chain_id" "$window" "$out" "$summary" <<'PY'
 import json, sys, urllib.request
-from collections import Counter
+from collections import Counter, defaultdict
 
 addr = sys.argv[1].lower()
 rpc_list = [item.strip() for item in sys.argv[2].split(",") if item.strip()]
@@ -69,6 +69,7 @@ out = sys.argv[5]
 summary_out = sys.argv[6]
 warnings = []
 active_rpc = rpc_list[0]
+token_meta_cache = {}
 
 def rpc_call(method, params):
     global active_rpc
@@ -103,6 +104,92 @@ def topic_to_addr(topic):
         return "0x" + topic[-40:].lower()
     return None
 
+def safe_hex_to_int(value, fallback=0):
+    if not isinstance(value, str):
+        return fallback
+    v = value.strip().lower()
+    if v in ("", "0x", "0x0"):
+        return 0
+    try:
+        return int(v, 16)
+    except Exception:
+        return fallback
+
+def format_units(raw_value, decimals):
+    try:
+        raw = int(raw_value)
+        dec = int(decimals)
+    except Exception:
+        return str(raw_value)
+    if dec < 0 or dec > 36:
+        dec = 18
+    if dec == 0:
+        return str(raw)
+    negative = raw < 0
+    if negative:
+        raw = abs(raw)
+    digits = str(raw).rjust(dec + 1, "0")
+    whole = digits[:-dec]
+    frac = digits[-dec:].rstrip("0")
+    text = whole if frac == "" else f"{whole}.{frac}"
+    return "-" + text if negative else text
+
+def parse_abi_string(hex_data):
+    if not isinstance(hex_data, str):
+        return ""
+    data = hex_data[2:] if hex_data.startswith("0x") else hex_data
+    data = data.strip()
+    if data == "":
+        return ""
+    # dynamic ABI string layout
+    if len(data) >= 192:
+        try:
+            offset = int(data[:64], 16) * 2
+            if offset + 64 <= len(data):
+                length = int(data[offset:offset + 64], 16)
+                start = offset + 64
+                end = start + (length * 2)
+                if end <= len(data):
+                    raw = bytes.fromhex(data[start:end])
+                    text = raw.decode("utf-8", errors="ignore").strip().strip("\x00")
+                    if text != "":
+                        return text
+        except Exception:
+            pass
+    # bytes32 fallback
+    if len(data) >= 64:
+        try:
+            raw = bytes.fromhex(data[:64]).rstrip(b"\x00")
+            text = raw.decode("utf-8", errors="ignore").strip()
+            return text
+        except Exception:
+            return ""
+    return ""
+
+def fetch_token_meta(token):
+    token = (token or "").lower().strip()
+    if token == "":
+        return {"symbol": "", "decimals": 18}
+    if token in token_meta_cache:
+        return token_meta_cache[token]
+    meta = {"symbol": "", "decimals": 18}
+    try:
+        decimals_hex = rpc_call("eth_call", [{"to": token, "data": "0x313ce567"}, "latest"])
+        decimals_int = safe_hex_to_int(decimals_hex, 18)
+        if 0 <= decimals_int <= 36:
+            meta["decimals"] = decimals_int
+    except Exception:
+        pass
+    try:
+        symbol_hex = rpc_call("eth_call", [{"to": token, "data": "0x95d89b41"}, "latest"])
+        symbol = parse_abi_string(symbol_hex)
+        if symbol:
+            meta["symbol"] = symbol
+    except Exception:
+        pass
+    token_meta_cache[token] = meta
+    return meta
+
 def fetch_logs(base_filter):
     logs = []
     cursor = start
@@ -131,6 +218,9 @@ def meter(value, width=18):
     full = int(round(score * width))
     return "█" * full + "░" * (width - full)
 
+def transfer_value(entry):
+    return safe_hex_to_int(entry.get("data", "0x0"), 0)
+
 latest = int(rpc_call("eth_blockNumber", []), 16)
 start = max(0, latest - window)
 balance_wei = int(rpc_call("eth_getBalance", [addr, "latest"]), 16)
@@ -145,11 +235,22 @@ out_logs = fetch_logs({"topics": [transfer_sig, topic_address(addr)]})
 token_counter = Counter()
 counterparty_in = Counter()
 counterparty_out = Counter()
+counterparty_in_value = Counter()
+counterparty_out_value = Counter()
+token_in_value = Counter()
+token_out_value = Counter()
+cp_in_token_value = defaultdict(Counter)
+cp_out_token_value = defaultdict(Counter)
+cp_in_token_events = defaultdict(Counter)
+cp_out_token_events = defaultdict(Counter)
 active_blocks = set()
+
 for entry in in_logs:
     token = (entry.get("address") or "").lower()
+    value = transfer_value(entry)
     if token:
         token_counter[token] += 1
+        token_in_value[token] += value
     block_hex = entry.get("blockNumber", "0x0")
     try:
         active_blocks.add(int(block_hex, 16))
@@ -160,11 +261,17 @@ for entry in in_logs:
         cp = topic_to_addr(topics[1])
         if cp:
             counterparty_in[cp] += 1
+            counterparty_in_value[cp] += value
+            if token:
+                cp_in_token_value[cp][token] += value
+                cp_in_token_events[cp][token] += 1
 
 for entry in out_logs:
     token = (entry.get("address") or "").lower()
+    value = transfer_value(entry)
     if token:
         token_counter[token] += 1
+        token_out_value[token] += value
     block_hex = entry.get("blockNumber", "0x0")
     try:
         active_blocks.add(int(block_hex, 16))
@@ -175,11 +282,68 @@ for entry in out_logs:
         cp = topic_to_addr(topics[2])
         if cp:
             counterparty_out[cp] += 1
+            counterparty_out_value[cp] += value
+            if token:
+                cp_out_token_value[cp][token] += value
+                cp_out_token_events[cp][token] += 1
+
+def build_counterparty_stats(counter, value_counter, token_values, token_events, limit=12):
+    rows = []
+    for cp, events in counter.most_common(limit):
+        cp_total_raw = int(value_counter.get(cp, 0))
+        top_token = ""
+        top_human = "0"
+        token_rows = []
+        for token, raw_value in token_values.get(cp, Counter()).most_common(6):
+            meta = fetch_token_meta(token)
+            human = format_units(raw_value, meta["decimals"])
+            symbol = meta.get("symbol") or token[:10]
+            if top_token == "":
+                top_token = token
+                top_human = human
+            token_rows.append({
+                "token": token,
+                "symbol": meta.get("symbol") or "",
+                "decimals": int(meta.get("decimals", 18)),
+                "events": int(token_events.get(cp, {}).get(token, 0)),
+                "raw_value_sum": str(int(raw_value)),
+                "human_value_sum": human,
+            })
+        rows.append({
+            "address": cp,
+            "events": int(events),
+            "raw_value_sum": str(cp_total_raw),
+            "top_token": top_token,
+            "top_token_human_value": top_human,
+            "tokens": token_rows,
+        })
+    return rows
+
+token_stats = []
+for token, events in token_counter.most_common(20):
+    meta = fetch_token_meta(token)
+    in_raw = int(token_in_value.get(token, 0))
+    out_raw = int(token_out_value.get(token, 0))
+    net_raw = in_raw - out_raw
+    token_stats.append({
+        "token": token,
+        "symbol": meta.get("symbol") or "",
+        "decimals": int(meta.get("decimals", 18)),
+        "events": int(events),
+        "in_raw": str(in_raw),
+        "out_raw": str(out_raw),
+        "net_raw": str(net_raw),
+        "in_human": format_units(in_raw, meta.get("decimals", 18)),
+        "out_human": format_units(out_raw, meta.get("decimals", 18)),
+        "net_human": format_units(net_raw, meta.get("decimals", 18)),
+    })
 
 in_count = len(in_logs)
 out_count = len(out_logs)
 total_events = in_count + out_count
 net_events = in_count - out_count
+total_in_raw = sum(int(v) for v in token_in_value.values())
+total_out_raw = sum(int(v) for v in token_out_value.values())
 
 flow_balance = 0.5 if total_events == 0 else ((net_events / total_events) + 1.0) / 2.0
 counterparty_unique = len(set(counterparty_in.keys()) | set(counterparty_out.keys()))
@@ -205,6 +369,9 @@ for i in range(len(dimension_names)):
         score = 1.0 - abs(dimensions[a] - dimensions[b])
         pairwise.append({"from": a, "to": b, "score": round(score, 4)})
 
+counterparty_in_stats = build_counterparty_stats(counterparty_in, counterparty_in_value, cp_in_token_value, cp_in_token_events, 12)
+counterparty_out_stats = build_counterparty_stats(counterparty_out, counterparty_out_value, cp_out_token_value, cp_out_token_events, 12)
+
 res = {
     "address": addr,
     "chain_id": chain_id,
@@ -219,6 +386,9 @@ res = {
     "erc20_in_events": in_count,
     "erc20_out_events": out_count,
     "erc20_net_events": net_events,
+    "erc20_total_in_raw": str(total_in_raw),
+    "erc20_total_out_raw": str(total_out_raw),
+    "erc20_total_net_raw": str(total_in_raw - total_out_raw),
     "unique_counterparties": counterparty_unique,
     "unique_tokens": token_unique,
     "active_blocks": len(active_blocks),
@@ -227,6 +397,10 @@ res = {
     "top_in_counterparties": counterparty_in.most_common(10),
     "top_out_counterparties": counterparty_out.most_common(10),
     "top_tokens": token_counter.most_common(10),
+    "counterparty_in_stats": counterparty_in_stats,
+    "counterparty_out_stats": counterparty_out_stats,
+    "token_stats": token_stats,
+    "token_meta": token_meta_cache,
     "warnings": warnings,
     "sample_in": in_logs[:5],
     "sample_out": out_logs[:5],
@@ -252,21 +426,24 @@ lines.append("[4d] correlation graph (pairwise similarity)")
 for row in pairwise:
     lines.append(f"  {row['from']:<24s} --{row['score']:.2f}--> {row['to']}")
 
-if counterparty_in:
+if counterparty_in_stats:
     lines.append("")
     lines.append("[counterparties] top inflow")
-    for cp, c in counterparty_in.most_common(5):
-        lines.append(f"  {cp}  x{c}")
-if counterparty_out:
+    for item in counterparty_in_stats[:5]:
+        token_label = item.get("top_token", "")[:10] if item.get("top_token") else "token"
+        lines.append(f"  {item['address']}  events={item['events']}  amount={item['top_token_human_value']} ({token_label})")
+if counterparty_out_stats:
     lines.append("")
     lines.append("[counterparties] top outflow")
-    for cp, c in counterparty_out.most_common(5):
-        lines.append(f"  {cp}  x{c}")
-if token_counter:
+    for item in counterparty_out_stats[:5]:
+        token_label = item.get("top_token", "")[:10] if item.get("top_token") else "token"
+        lines.append(f"  {item['address']}  events={item['events']}  amount={item['top_token_human_value']} ({token_label})")
+if token_stats:
     lines.append("")
     lines.append("[tokens] most active")
-    for token, c in token_counter.most_common(5):
-        lines.append(f"  {token}  x{c}")
+    for token in token_stats[:5]:
+        symbol = token.get("symbol") or token["token"][:10]
+        lines.append(f"  {token['token']} ({symbol})  events={token['events']}  in={token['in_human']} out={token['out_human']}")
 if warnings:
     lines.append("")
     lines.append("[warn] partial log windows skipped")

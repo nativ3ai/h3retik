@@ -29,3 +29,4 @@ check_bin "onchain-halmos" onchain-halmos
 check_bin "onchain-rpc-check" onchain-rpc-check
 check_bin "onchain-rpc-catalog" onchain-rpc-catalog
 check_bin "onchain-address-flow" onchain-address-flow
+check_bin "onchain-dossier" onchain-dossier

@@ -223,7 +223,8 @@ if ask_yes_no "Install optional bundles now? (You can also do this later with: h
     web-adv-plus "Web Adv Plus (katana/gau/dalfox/httpx/jwt-tool)" \
     ad-plus "AD Plus (kerbrute/ldapdomaindump/certipy/evil-winrm)" \
     k8s-plus "K8S Plus (trivy/kubescape/kube-hunter)" \
-    crack-plus "Crack Plus (hashcat/john)") || bundle=""
+    crack-plus "Crack Plus (hashcat/john)" \
+    coop-plus "Co-op Plus (wildmesh)") || bundle=""
   if [[ -n "$bundle" ]]; then
     H3RETIK_KALI_CONTAINER="$kali_container" "$ROOT/h3retik" tools install "$bundle" || true
   fi

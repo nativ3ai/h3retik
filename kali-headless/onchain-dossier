@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+address="${1:-}"
+network="${2:-eth-mainnet}"
+case_tag="${3:-case}"
+window="${4:-50000}"
+
+if [[ -z "$address" ]]; then
+  echo "usage: onchain-dossier <0xaddress> [network-key] [case-tag] [block-window]" >&2
+  exit 2
+fi
+
+if [[ ! "$address" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+  echo "address must be 0x + 40 hex chars" >&2
+  exit 2
+fi
+
+mkdir -p /artifacts/onchain/dossiers
+safe_addr="$(echo "${address,,}" | tr '/: ' '___')"
+safe_case="$(echo "$case_tag" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
+if [[ -z "$safe_case" ]]; then
+  safe_case="case"
+fi
+
+safe_flow="$(echo "${address,,}-$network" | tr '/: ' '___')"
+flow_json="/artifacts/onchain/address-flow-${safe_flow}.json"
+
+if [[ ! -f "$flow_json" ]]; then
+  onchain-address-flow "$address" "$network" "$window" >/tmp/onchain-dossier-flow.log 2>&1 || {
+    cat /tmp/onchain-dossier-flow.log >&2 || true
+    echo "[err] unable to generate address-flow artifact for dossier input" >&2
+    exit 1
+  }
+fi
+
+if [[ ! -f "$flow_json" ]]; then
+  flow_json="$(ls -1t /artifacts/onchain/address-flow-* 2>/dev/null | head -n 1 || true)"
+fi
+
+if [[ -z "$flow_json" || ! -f "$flow_json" ]]; then
+  echo "[err] no address-flow artifact available for dossier build" >&2
+  exit 1
+fi
+
+ts="$(date -u +%Y%m%d-%H%M%S)"
+dossier_json="/artifacts/onchain/dossiers/${ts}-${safe_case}-${safe_addr}-${network}.json"
+dossier_md="/artifacts/onchain/dossiers/${ts}-${safe_case}-${safe_addr}-${network}.md"
+
+python3 - "$address" "$network" "$case_tag" "$flow_json" "$dossier_json" "$dossier_md" <<'PY'
+import hashlib
+import json
+import re
+import sys
+from datetime import datetime, timezone
+
+address = sys.argv[1].lower()
+network = sys.argv[2]
+case_tag = sys.argv[3]
+flow_path = sys.argv[4]
+out_json = sys.argv[5]
+out_md = sys.argv[6]
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def to_int(value, default=0):
+    if value is None:
+        return default
+    if isinstance(value, int):
+        return value
+    try:
+        text = str(value).strip()
+        if text == "":
+            return default
+        if text.lower().startswith("0x"):
+            return int(text, 16)
+        if text.endswith(".0"):
+            text = text[:-2]
+        return int(text)
+    except Exception:
+        return default
+
+def lower_addr(value):
+    text = str(value or "").strip().lower()
+    if re.fullmatch(r"0x[a-f0-9]{40}", text):
+        return text
+    return ""
+
+with open(flow_path, "r", encoding="utf-8") as f:
+    flow = json.load(f)
+
+target = lower_addr(flow.get("address")) or address
+chain_id = to_int(flow.get("chain_id"), 0)
+in_events = to_int(flow.get("erc20_in_events"), 0)
+out_events = to_int(flow.get("erc20_out_events"), 0)
+net_events = to_int(flow.get("erc20_net_events"), in_events - out_events)
+unique_counterparties = to_int(flow.get("unique_counterparties"), 0)
+unique_tokens = to_int(flow.get("unique_tokens"), 0)
+in_raw = to_int(flow.get("erc20_total_in_raw"), 0)
+out_raw = to_int(flow.get("erc20_total_out_raw"), 0)
+net_raw = to_int(flow.get("erc20_total_net_raw"), in_raw - out_raw)
+dimensions = flow.get("dimensions") or {}
+density = float(dimensions.get("activity_density", 0.0) or 0.0)
+
+in_stats = flow.get("counterparty_in_stats") or []
+out_stats = flow.get("counterparty_out_stats") or []
+token_stats = flow.get("token_stats") or []
+
+top_out_events = to_int((out_stats[0] or {}).get("events"), 0) if out_stats else 0
+top_out_ratio = (top_out_events / out_events) if out_events > 0 else 0.0
+top_out_addr = lower_addr((out_stats[0] or {}).get("address")) if out_stats else ""
+
+flags = []
+def add_flag(fid, title, level, rationale):
+    flags.append({
+        "id": fid,
+        "title": title,
+        "severity": level,
+        "rationale": rationale,
+    })
+
+if out_events >= 20 and out_events >= (in_events * 2):
+    add_flag("rapid_outflow_dominance", "Rapid outflow dominance", "high", f"out_events={out_events} vs in_events={in_events}")
+if out_events >= 10 and top_out_ratio >= 0.5 and top_out_addr:
+    add_flag("counterparty_concentration", "Outflow concentration to single peer", "high", f"top_out={top_out_addr} ratio={top_out_ratio:.2f}")
+if density >= 0.75 and (in_events + out_events) >= 40:
+    add_flag("high_velocity_window", "High-velocity transfer window", "medium", f"activity_density={density:.2f}")
+if unique_counterparties >= 25:
+    add_flag("broad_counterparty_fanout", "Broad counterparty fanout", "medium", f"unique_counterparties={unique_counterparties}")
+if unique_tokens >= 15:
+    add_flag("multi_token_movement", "Multi-token movement pattern", "medium", f"unique_tokens={unique_tokens}")
+if not flags:
+    add_flag("no_auto_red_flags", "No strong automated red flags", "info", "heuristics below threshold; manual review still required")
+
+actors = []
+for direction, stats in (("inflow", in_stats), ("outflow", out_stats)):
+    for item in stats[:12]:
+        peer = lower_addr(item.get("address"))
+        if not peer:
+            continue
+        actor = {
+            "address": peer,
+            "direction": direction,
+            "events": to_int(item.get("events"), 0),
+            "raw_value_sum": str(item.get("raw_value_sum", "0")),
+            "top_token": lower_addr(item.get("top_token")),
+            "top_token_human_value": str(item.get("top_token_human_value", "")),
+            "tokens": [],
+        }
+        for token in item.get("tokens") or []:
+            token_addr = lower_addr(token.get("token"))
+            if not token_addr:
+                continue
+            actor["tokens"].append({
+                "token": token_addr,
+                "symbol": str(token.get("symbol") or ""),
+                "events": to_int(token.get("events"), 0),
+                "human_value_sum": str(token.get("human_value_sum") or ""),
+                "raw_value_sum": str(token.get("raw_value_sum") or "0"),
+            })
+        actors.append(actor)
+
+tokens = []
+for item in token_stats[:20]:
+    token_addr = lower_addr(item.get("token"))
+    if not token_addr:
+        continue
+    tokens.append({
+        "token": token_addr,
+        "symbol": str(item.get("symbol") or ""),
+        "events": to_int(item.get("events"), 0),
+        "in_human": str(item.get("in_human") or ""),
+        "out_human": str(item.get("out_human") or ""),
+        "net_human": str(item.get("net_human") or ""),
+        "in_raw": str(item.get("in_raw") or "0"),
+        "out_raw": str(item.get("out_raw") or "0"),
+        "net_raw": str(item.get("net_raw") or "0"),
+    })
+
+generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+flow_hash = sha256_file(flow_path)
+
+dossier = {
+    "schema_version": "h3retik-onchain-dossier/v0.1",
+    "generated_at_utc": generated_at,
+    "case_tag": case_tag,
+    "scope": {
+        "target_address": target,
+        "network_key": network,
+        "chain_id": chain_id,
+    },
+    "source_artifacts": [
+        {
+            "path": flow_path,
+            "sha256": flow_hash,
+            "type": "address-flow",
+        }
+    ],
+    "flow_summary": {
+        "erc20_in_events": in_events,
+        "erc20_out_events": out_events,
+        "erc20_net_events": net_events,
+        "erc20_total_in_raw": str(in_raw),
+        "erc20_total_out_raw": str(out_raw),
+        "erc20_total_net_raw": str(net_raw),
+        "unique_counterparties": unique_counterparties,
+        "unique_tokens": unique_tokens,
+        "dimensions": dimensions,
+    },
+    "actors": actors,
+    "tokens": tokens,
+    "triage_flags": flags,
+    "legal_compliance": {
+        "status": "manual-review-required",
+        "notes": [
+            "Heuristic flags are investigative leads, not legal conclusions.",
+            "Attribution, sanctions linkage, and fraud claims require independent evidence and jurisdiction-aware legal review.",
+            "Preserve original artifacts and hashes for chain-of-custody.",
+        ],
+        "checklist": [
+            "Preserve source artifact hashes and generation timestamps.",
+            "Corroborate suspicious peers with at least one independent data source.",
+            "Record chain/network context for every claim.",
+            "Separate observed facts from analyst inference in reporting.",
+        ],
+    },
+}
+
+dossier_blob = json.dumps(dossier, indent=2).encode("utf-8")
+with open(out_json, "wb") as f:
+    f.write(dossier_blob)
+dossier_hash = hashlib.sha256(dossier_blob).hexdigest()
+
+lines = []
+lines.append("# Onchain Investigation Dossier")
+lines.append("")
+lines.append(f"- generated_at_utc: {generated_at}")
+lines.append(f"- case_tag: {case_tag}")
+lines.append(f"- target_address: {target}")
+lines.append(f"- network: {network} (chain_id={chain_id})")
+lines.append("")
+lines.append("## Source Artifacts")
+lines.append(f"- `{flow_path}`")
+lines.append(f"- sha256: `{flow_hash}`")
+lines.append("")
+lines.append("## Flow Summary")
+lines.append(f"- events: in={in_events} out={out_events} net={net_events}")
+lines.append(f"- value_raw: in={in_raw} out={out_raw} net={net_raw}")
+lines.append(f"- unique_counterparties: {unique_counterparties}")
+lines.append(f"- unique_tokens: {unique_tokens}")
+lines.append("")
+lines.append("## Triage Flags")
+for flag in flags:
+    lines.append(f"- [{flag['severity'].upper()}] {flag['title']} — {flag['rationale']}")
+lines.append("")
+lines.append("## Top Actors")
+for actor in actors[:10]:
+    lines.append(f"- {actor['direction']} :: {actor['address']} :: events={actor['events']} raw={actor['raw_value_sum']}")
+    for token in actor["tokens"][:3]:
+        symbol = token["symbol"] if token["symbol"] else token["token"]
+        lines.append(f"  - token {symbol} :: events={token['events']} value={token['human_value_sum']} raw={token['raw_value_sum']}")
+if not actors:
+    lines.append("- none")
+lines.append("")
+lines.append("## Top Tokens")
+for token in tokens[:10]:
+    symbol = token["symbol"] if token["symbol"] else token["token"]
+    lines.append(f"- {symbol} ({token['token']}) :: events={token['events']} in={token['in_human']} out={token['out_human']} net={token['net_human']}")
+if not tokens:
+    lines.append("- none")
+lines.append("")
+lines.append("## Compliance Notes")
+for note in dossier["legal_compliance"]["notes"]:
+    lines.append(f"- {note}")
+lines.append("")
+lines.append("## Compliance Checklist")
+for item in dossier["legal_compliance"]["checklist"]:
+    lines.append(f"- [ ] {item}")
+lines.append("")
+lines.append("## Integrity")
+lines.append(f"- dossier_sha256: `{dossier_hash}`")
+
+with open(out_md, "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+
+print(f"[onchain-dossier] case={case_tag} target={target} network={network} chain_id={chain_id}")
+print(f"[onchain-dossier] flags={len(flags)} actors={len(actors)} tokens={len(tokens)}")
+print(f"[onchain-dossier] source={flow_path} source_sha256={flow_hash}")
+print(f"[artifact] dossier_json={out_json}")
+print(f"[artifact] dossier_md={out_md}")
+PY
+

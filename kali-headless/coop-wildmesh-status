@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+home="${COOP_WILDMESH_HOME:-/artifacts/coop/wildmesh-node}"
+channel="${COOP_WILDMESH_CHANNEL:-h3retik-ops}"
+
+echo "[coop][wildmesh] status"
+echo "[coop][wildmesh] home=$home"
+echo "[coop][wildmesh] channel=$channel"
+
+command -v wildmesh >/dev/null 2>&1 || {
+  echo "[coop][wildmesh] binary missing: wildmesh" >&2
+  exit 127
+}
+
+wildmesh status --home "$home" || true
+echo ""
+wildmesh profile --home "$home" --json || true
+echo ""
+wildmesh channels --home "$home" || true
+echo ""
+wildmesh subscriptions --home "$home" || true
+echo ""
+wildmesh peers --home "$home" || true

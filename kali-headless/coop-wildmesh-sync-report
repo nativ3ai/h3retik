@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+home="${COOP_WILDMESH_HOME:-/artifacts/coop/wildmesh-node}"
+channel="${COOP_WILDMESH_CHANNEL:-h3retik-ops}"
+peer="${COOP_WILDMESH_PEER_ID:-}"
+telemetry_dir="${COOP_TELEMETRY_DIR:-/telemetry}"
+out_dir="/artifacts/coop"
+mkdir -p "$out_dir"
+
+command -v wildmesh >/dev/null 2>&1 || {
+  echo "[coop][wildmesh] binary missing: wildmesh" >&2
+  exit 127
+}
+
+stamp="$(date -u +"%Y%m%d-%H%M%S")"
+out_json="$out_dir/wildmesh-sync-${stamp}.json"
+
+python3 - "$telemetry_dir" "$out_json" <<'PY'
+import json
+import pathlib
+import sys
+from collections import Counter
+
+telemetry = pathlib.Path(sys.argv[1])
+out_path = pathlib.Path(sys.argv[2])
+
+commands = telemetry / "commands.jsonl"
+findings = telemetry / "findings.jsonl"
+loot = telemetry / "loot.jsonl"
+
+def load(path):
+    rows=[]
+    if not path.exists():
+        return rows
+    for line in path.read_text().splitlines():
+        line=line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
+    return rows
+
+cmd_rows = load(commands)
+find_rows = load(findings)
+loot_rows = load(loot)
+
+modes = Counter([str(r.get("phase","exploit")).split("-")[0] for r in cmd_rows])
+status = Counter([str(r.get("status","unknown")).lower() for r in cmd_rows])
+sev = Counter([str(r.get("severity","unknown")).lower() for r in find_rows])
+
+payload = {
+  "generated_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+  "summary": {
+    "commands": len(cmd_rows),
+    "findings": len(find_rows),
+    "loot": len(loot_rows),
+    "mode_counts": dict(modes),
+    "command_status": dict(status),
+    "finding_severity": dict(sev),
+  },
+  "latest": {
+    "command": cmd_rows[-1] if cmd_rows else None,
+    "finding": find_rows[-1] if find_rows else None,
+    "loot": loot_rows[-1] if loot_rows else None,
+  }
+}
+out_path.write_text(json.dumps(payload, indent=2))
+print(json.dumps(payload))
+PY
+
+body="$(jq -c '{kind:"h3retik_sync",summary:.summary,generated_at:.generated_at}' "$out_json" 2>/dev/null || echo '{}')"
+
+wildmesh broadcast "$channel" --home "$home" --body "$body" || true
+
+if [[ -n "$peer" ]]; then
+  wildmesh artifact-offer "$peer" "$out_json" --home "$home" --note "h3retik telemetry sync" || true
+fi
+
+echo "[coop][wildmesh] artifact=$out_json"
+echo "[coop][wildmesh] channel=$channel"
+[[ -n "$peer" ]] && echo "[coop][wildmesh] peer_offer=$peer"

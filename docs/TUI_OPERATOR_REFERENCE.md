@@ -31,7 +31,7 @@ Global navigation and execution:
 - `o` — switch to OSINT scope
 - `c` — switch to ONCHAIN scope
 - `g` — switch to CO-OP scope
-- `m` — ARCH map mode toggle (exploit)
+- `m` — ARCH map mode toggle (`exploit` + `onchain`)
 - `r` — refresh telemetry state
 - `q` / `ctrl+c` — quit
 
@@ -64,10 +64,13 @@ Normal view:
 - Exploit scope adds: live attack graph, node details, attack degree map.
 - Co-op scope adds: C2 readiness block (`state`, `score`, `steps`).
 
-Map mode (`m`, exploit scope):
+Map mode (`m`, exploit/onchain scope):
 
 - Left: tree attack map (hierarchical nodes).
-- Right: selected node detail + node action panel + interactive tamper editor.
+- Right: selected node detail + node action panel.
+- Exploit map adds interactive tamper editor.
+- Onchain map adds flow/entity pivots (actors/tokens) and focused trace/audit actions.
+- Onchain map nodes now include actor peers, token lanes, and amount-centric telemetry (event counts + value summaries) from `onchain-address-flow`.
 - Node action roles:
   - `EXP` = inspect/read actions
   - `TMP` = tamper/probe actions
@@ -151,7 +154,7 @@ Scopes are operator lanes:
 - `exploit` (default): offensive recon-to-impact workflows.
 - `osint`: investigation pipeline workflows (seed -> enrichment -> analysis).
 - `onchain`: chain/RPC/flow/audit workflows.
-- `coop`: CALDERA C2 collaboration workflows.
+- `coop`: backend-agnostic collaboration workflows (`CALDERA` or `WILDMESH`).
 
 Scope affects:
 
@@ -355,9 +358,12 @@ If the default `h3retik-kali` container is already running, plain `h3retik` is e
 Headless co-op quick checks:
 
 ```bash
-h3retik coop up
-h3retik coop status
-h3retik coop report
+h3retik coop caldera up
+h3retik coop caldera status
+h3retik coop caldera report
+h3retik coop wildmesh setup
+h3retik coop wildmesh status
+h3retik coop wildmesh sync
 ```
 
 Replay usage:

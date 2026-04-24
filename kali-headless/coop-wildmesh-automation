@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-once}"
+interval="${2:-120}"
+
+run_tick() {
+  echo "[coop][wildmesh] automation tick"
+  coop-wildmesh-policy-check
+  coop-wildmesh-sync-report
+}
+
+case "$mode" in
+  once)
+    run_tick
+    ;;
+  loop)
+    while true; do
+      run_tick || true
+      sleep "$interval"
+    done
+    ;;
+  *)
+    echo "usage: coop-wildmesh-automation [once|loop] [interval_seconds]" >&2
+    exit 1
+    ;;
+esac

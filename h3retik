@@ -90,7 +90,7 @@ Usage:
   h3retik build-kali               # build kali image
   h3retik shell                    # interactive shell in kali
   h3retik kali <cmd...>            # execute command in kali
-  h3retik coop <subcommand>        # caldera co-op helpers (check/up/status/stop/api/report)
+  h3retik coop [backend] <subcmd>  # co-op helpers (caldera|wildmesh)
   h3retik target <args...>         # passthrough to scripts/targetctl.py
   h3retik pipeline <args...>       # passthrough to scripts/security_pipeline.py
   h3retik observatory <args...>    # passthrough to scripts/observatory_runner.py
@@ -108,6 +108,7 @@ Usage:
 Env overrides:
   H3RETIK_KALI_CONTAINER           # default: h3retik-kali
   H3RETIK_KALI_IMAGE               # default: h3retik/kali:v0.0.4 (compose mode)
+  H3RETIK_COOP_BACKEND             # default: caldera (alt: wildmesh)
   H3RETIK_SKIP_UP=1                # skip docker compose up (attach to existing container)
 EOF
 }
@@ -212,35 +213,77 @@ case "$cmd" in
   coop)
     shift || true
     ensure_deps
+    backend="${H3RETIK_COOP_BACKEND:-caldera}"
+    first="${1:-}"
+    if [[ "$first" == "caldera" || "$first" == "wildmesh" ]]; then
+      backend="$first"
+      shift || true
+    fi
     sub="${1:-status}"
     shift || true
     if [[ "${H3RETIK_SKIP_UP:-0}" != "1" ]]; then
       ensure_kali_runtime
     fi
+    if [[ "$backend" == "caldera" ]]; then
+      case "$sub" in
+        check)
+          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-check'
+          ;;
+        up)
+          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-up'
+          ;;
+        status)
+          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-status'
+          ;;
+        stop)
+          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-stop'
+          ;;
+        api)
+          path="${1:-/api/operations}"
+          method="${2:-GET}"
+          body="${3:-}"
+          exec docker exec "$KALI_CONTAINER" bash -lc "coop-caldera-api $(printf %q "$path") $(printf %q "$method") $(printf %q "$body")"
+          ;;
+        report)
+          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-op-report'
+          ;;
+        *)
+          die "unknown caldera coop subcommand: $sub (use: check|up|status|stop|api|report)"
+          ;;
+      esac
+    fi
     case "$sub" in
       check)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-check'
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-check'
+        ;;
+      setup)
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-setup'
         ;;
       up)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-up'
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-up'
         ;;
       status)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-status'
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-status'
+        ;;
+      discover)
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-discover'
+        ;;
+      policy)
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-policy-check'
+        ;;
+      sync)
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-sync-report'
+        ;;
+      automate)
+        mode="${1:-once}"
+        interval="${2:-120}"
+        exec docker exec "$KALI_CONTAINER" bash -lc "coop-wildmesh-automation $(printf %q "$mode") $(printf %q "$interval")"
         ;;
       stop)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-stop'
-        ;;
-      api)
-        path="${1:-/api/operations}"
-        method="${2:-GET}"
-        body="${3:-}"
-        exec docker exec "$KALI_CONTAINER" bash -lc "coop-caldera-api $(printf %q "$path") $(printf %q "$method") $(printf %q "$body")"
-        ;;
-      report)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-op-report'
+        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-stop'
         ;;
       *)
-        die "unknown coop subcommand: $sub (use: check|up|status|stop|api|report)"
+        die "unknown wildmesh coop subcommand: $sub (use: check|setup|up|status|discover|policy|sync|automate|stop)"
         ;;
     esac
     ;;
@@ -274,7 +317,8 @@ echo "[bundle] web-adv-plus: httpx-toolkit,katana,gau,waybackurls,dalfox,kxss,jw
 echo "[bundle] ad-plus: kerbrute,ldapdomaindump,certipy,evil-winrm"
 echo "[bundle] k8s-plus: trivy,kubescape,kube-hunter"
 echo "[bundle] crack-plus: hashcat,john"
-for t in masscan rustscan naabu zmap nbtscan subfinder httpx-toolkit katana gau waybackurls dalfox kxss jwt-tool kerbrute ldapdomaindump certipy evil-winrm trivy kubescape kube-hunter hashcat john; do
+echo "[bundle] coop-plus: wildmesh"
+for t in masscan rustscan naabu zmap nbtscan subfinder httpx-toolkit katana gau waybackurls dalfox kxss jwt-tool kerbrute ldapdomaindump certipy evil-winrm trivy kubescape kube-hunter hashcat john wildmesh; do
   lookup="$t"
   if [ "$t" = "certipy" ] && ! command -v certipy >/dev/null 2>&1; then
     lookup="certipy-ad"
@@ -311,6 +355,8 @@ elif [ \"\$spec\" = \"k8s-plus\" ]; then
   tools='trivy kubescape kube-hunter'
 elif [ \"\$spec\" = \"crack-plus\" ]; then
   tools='hashcat john'
+elif [ \"\$spec\" = \"coop-plus\" ]; then
+  tools='wildmesh'
 else
   tools=\$(echo \"\$spec\" | tr ',' ' ')
 fi
@@ -427,6 +473,13 @@ EOF
         python3 -m pip install --break-system-packages kube-hunter >/dev/null 2>&1 || echo \"[warn] pip install failed for kube-hunter\"
       fi
       ;;
+    wildmesh)
+      if ! command -v wildmesh >/dev/null 2>&1; then
+        apt-get install -y --no-install-recommends cargo >/dev/null || true
+        cargo install --locked --git https://github.com/nativ3ai/wildmesh --tag v0.3.9 wildmesh >/dev/null 2>&1 || echo \"[warn] cargo install failed for wildmesh\"
+        [ -x /root/.cargo/bin/wildmesh ] && ln -sf /root/.cargo/bin/wildmesh /usr/local/bin/wildmesh || true
+      fi
+      ;;
     *)
       apt-get install -y --no-install-recommends \"\$t\" >/dev/null || echo \"[warn] unknown/failed tool \$t\"
       ;;
@@ -487,6 +540,7 @@ done
     docker exec "$KALI_CONTAINER" bash -lc 'osint-stack-check' || true
     docker exec "$KALI_CONTAINER" bash -lc 'onchain-stack-check' || true
     docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-check' || true
+    docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-check' || true
     ;;
   update)
     ensure_deps

@@ -76,6 +76,16 @@ Notes:
 | `python3` | `target`/`pipeline`/`observatory` helpers | Yes |
 | `go` | local build of `juicetui` (`h3retik build`) | Recommended |
 
+## Platform Support
+
+| Host OS | Entry path | Status |
+|---|---|---|
+| macOS (Apple Silicon / Intel) | source installer or npm (`@h1dr4/h3retik`) | Supported |
+| Linux (x86_64 / arm64) | source installer or npm (`@h1dr4/h3retik`) | Supported |
+| Windows 11/10 + Docker Desktop | npm (`@h1dr4/h3retik`) native launcher | Supported |
+
+The runtime is target-agnostic and machine-agnostic: host OS only provides launcher + Docker, while operations execute through the same Kali toolchain.
+
 Go clarity:
 - If `bin/juicetui` is already present (prebuilt), H3RETIK can run without Go.
 - If no prebuilt binary is present, Go becomes required to compile the TUI.
@@ -98,6 +108,26 @@ bash -lc 'SRC="${H3RETIK_SRC_DIR:-$HOME/.local/src/h3retik}"; rm -rf "$SRC"; git
 
 ```bash
 bash -lc 'curl -fsSL https://raw.githubusercontent.com/nativ3ai/h3retik/main/scripts/bootstrap_h3retik.sh | bash'
+```
+
+### npm global install (multiplatform)
+
+```bash
+npm i -g @h1dr4/h3retik
+h3retik
+```
+
+npm package behavior by platform:
+- macOS/Linux: installs and invokes the native `h3retik` launcher (`scripts/install_h3retik.sh`) and keeps full CLI parity.
+- Windows: runs a native Node launcher, ensures `juicetui.exe`, brings up Docker Compose runtime, then starts the TUI.
+- Binary bootstrap: pulls prebuilt `juicetui_<version>_<os>_<arch>.tar.gz` from GitHub Releases; if unavailable, falls back to local `go build`.
+
+For Windows, Docker Desktop must be running. Native `h3retik` command works directly from PowerShell:
+
+```powershell
+npm i -g @h1dr4/h3retik
+h3retik up
+h3retik
 ```
 
 What the all-in-one installer does:
@@ -149,8 +179,10 @@ h3retik tools install web-adv-plus
 h3retik tools install ad-plus
 h3retik tools install k8s-plus
 h3retik tools install crack-plus
+h3retik tools install coop-plus    # install wildmesh collaboration runtime
 h3retik kali "<cmd>"             # execute command in kali container
-h3retik coop <cmd>               # caldera co-op helpers (check/up/status/stop/api/report)
+h3retik coop caldera <cmd>       # caldera helpers (check/up/status/stop/api/report)
+h3retik coop wildmesh <cmd>      # wildmesh helpers (check/setup/up/status/discover/policy/sync/automate/stop)
 h3retik update                   # pull latest repo + reinstall global launcher
 h3retik doctor                   # runtime checks
 ```
@@ -159,6 +191,22 @@ h3retik doctor                   # runtime checks
 - Use `h3retik update` to pull latest upstream changes and refresh the installed runtime.
 - To bypass first-run setup in automation, set `H3RETIK_NO_SETUP_WIZARD=1`.
 - Setup state/config is persisted in `~/.config/h3retik` (override with `H3RETIK_CONFIG_DIR`).
+
+## Maintainer Release (Git tag + npm)
+
+```bash
+# 1) bump version in VERSION + package.json
+# 2) push tag (publishes cross-platform juicetui assets via GitHub Actions)
+git tag v0.0.4
+git push origin v0.0.4
+
+# 3) publish npm package
+npm publish --access public
+```
+
+Package names:
+- Preferred: `@h1dr4/h3retik` (scoped, org-owned).
+- Optional if unclaimed: `h3retik` (unscoped).
 
 ## Existing Kali / External Runtime
 
@@ -206,7 +254,7 @@ Minimum compatibility checklist for external Kali images:
 - Exploit lane core: `nmap`, `ffuf`, `nikto`, `sqlmap`, `hydra`, `medusa`, `nuclei`, `metasploit-framework`.
 - OSINT lane core: `theharvester`, `bbot`, `spiderfoot`, `recon-ng`, `rengine` (or equivalent callable wrapper).
 - Onchain lane core: `slither`, `myth` (mythril), `forge`, `cast`, `echidna`, `medusa`, `halmos`.
-- Co-op lane core: `caldera` + wrappers (`coop-caldera-*`).
+- Co-op lane core: `caldera` and/or `wildmesh` + wrappers (`coop-caldera-*`, `coop-wildmesh-*`).
 
 If you want full feature parity, use `h3retik up` with the default bundled Kali image.
 
@@ -224,13 +272,15 @@ If you want full feature parity, use `h3retik up` with the default bundled Kali 
 
 Capability matrix: [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
 
-## Co-op UX Flow (CALDERA in TUI)
+## Co-op UX Flow (Backend-Agnostic)
 
 - Open `CTRL`, press `g` to switch scope to `CO-OP`.
 - Use `[]` to choose section (`LAUNCH`, `TARGET`, `FIRE`, `HISTORY`).
 - Use `↑/↓` for category selection and `,/.` for options in the selected category.
-- In `TARGET`, set CALDERA URL/API key/operation/group.
-- In `FIRE`, run the loop: start C2 -> status -> agents -> operations -> report.
+- In `TARGET`, set backend profile (`CALDERA` or `WILDMESH`), then configure backend-specific fields.
+- In `FIRE`, run the loop:
+  - CALDERA: start C2 -> status -> agents -> operations -> report.
+  - WILDMESH: setup node -> status -> discover -> policy check -> snapshot sync.
 - A non-invasive context hint appears in `CTRL` while in `CO-OP` mode to guide next step.
 
 ## Repository Includes

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+home="${COOP_WILDMESH_HOME:-/artifacts/coop/wildmesh-node}"
+channel="${COOP_WILDMESH_CHANNEL:-h3retik-ops}"
+
+check_bin() {
+  local label="$1"
+  local bin="$2"
+  if command -v "$bin" >/dev/null 2>&1; then
+    echo "[coop][wildmesh] ok   :: $label -> $(command -v "$bin")"
+  else
+    echo "[coop][wildmesh] miss :: $label"
+    return 1
+  fi
+}
+
+rc=0
+check_bin "wildmesh" wildmesh || rc=1
+check_bin "curl" curl || rc=1
+check_bin "jq" jq || rc=1
+
+if [[ -f "$home/config.json" ]]; then
+  echo "[coop][wildmesh] ok   :: config -> $home/config.json"
+else
+  echo "[coop][wildmesh] info :: config missing ($home/config.json)"
+fi
+
+echo "[coop][wildmesh] home=$home"
+echo "[coop][wildmesh] channel=$channel"
+if command -v wildmesh >/dev/null 2>&1; then
+  wildmesh status --home "$home" || true
+fi
+
+exit "$rc"

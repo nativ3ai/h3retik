@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+home="${COOP_WILDMESH_HOME:-/artifacts/coop/wildmesh-node}"
+label="${COOP_WILDMESH_AGENT_LABEL:-h3retik-operator}"
+channel="${COOP_WILDMESH_CHANNEL:-h3retik-ops}"
+interests_csv="${COOP_WILDMESH_INTERESTS:-redteam,ops,security}"
+bootstrap_csv="${COOP_WILDMESH_BOOTSTRAP_URLS:-}"
+local_only="${COOP_WILDMESH_LOCAL_ONLY:-false}"
+
+command -v wildmesh >/dev/null 2>&1 || {
+  echo "[coop][wildmesh] binary missing: wildmesh" >&2
+  echo "[coop][wildmesh] install suggestion: h3retik tools install coop-plus" >&2
+  exit 127
+}
+
+mkdir -p "$home" /artifacts/coop
+
+setup_cmd=(wildmesh setup --home "$home" --agent-label "$label" --cooperate --executor-mode disabled --with-hermes false --launch-agent true)
+if [[ "${local_only,,}" == "true" || "${local_only}" == "1" ]]; then
+  setup_cmd+=(--local-only)
+fi
+IFS=',' read -r -a interests <<<"$interests_csv"
+for item in "${interests[@]}"; do
+  item="$(echo "$item" | xargs)"
+  [[ -n "$item" ]] && setup_cmd+=(--interest "$item")
+done
+IFS=',' read -r -a bootstraps <<<"$bootstrap_csv"
+for item in "${bootstraps[@]}"; do
+  item="$(echo "$item" | xargs)"
+  [[ -n "$item" ]] && setup_cmd+=(--bootstrap-url "$item")
+done
+
+"${setup_cmd[@]}"
+
+wildmesh create-channel "$channel" --home "$home" >/dev/null 2>&1 || true
+wildmesh subscribe "$channel" --home "$home" >/dev/null 2>&1 || true
+
+echo "[coop][wildmesh] setup ready"
+echo "[coop][wildmesh] home=$home"
+echo "[coop][wildmesh] channel=$channel"

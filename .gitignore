@@ -6,6 +6,7 @@ telemetry/**
 !telemetry/.gitkeep
 artifacts/**
 !artifacts/.gitkeep
+backups/
 *.tmp
 __pycache__/
 *.pyc

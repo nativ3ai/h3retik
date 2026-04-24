@@ -9,8 +9,8 @@ If you attach h3retik to your own Kali container/image, these are the minimum re
 - Base: `bash`, `python3`, `curl`, `jq`, `git`.
 - Exploit core: `nmap`, `ffuf`, `nikto`, `sqlmap`, `hydra`, `medusa`, `nuclei`, `msfconsole`.
 - OSINT wrappers: `osint-seed-harvest`, `osint-deep-bbot` or `osint-deep-spiderfoot`, `osint-reconng`, `osint-rengine`, `osint-stack-check`.
-- Onchain wrappers: `onchain-rpc-catalog`, `onchain-rpc-check`, `onchain-address-flow`, `onchain-slither`, `onchain-mythril`, `onchain-foundry-check`, `onchain-echidna`, `onchain-medusa`, `onchain-halmos`, `onchain-stack-check`.
-- Co-op wrappers: `coop-caldera-check`, `coop-caldera-up`, `coop-caldera-status`, `coop-caldera-api`, `coop-caldera-op-report`, `coop-caldera-stop`.
+- Onchain wrappers: `onchain-rpc-catalog`, `onchain-rpc-check`, `onchain-address-flow`, `onchain-dossier`, `onchain-slither`, `onchain-mythril`, `onchain-foundry-check`, `onchain-echidna`, `onchain-medusa`, `onchain-halmos`, `onchain-stack-check`.
+- Co-op wrappers: `coop-caldera-*`, `coop-wildmesh-*`.
 
 Behavior in TUI:
 
@@ -24,6 +24,7 @@ Optional lane bundles (install on demand):
 - `h3retik tools install ad-plus` -> `kerbrute,ldapdomaindump,certipy,evil-winrm`
 - `h3retik tools install k8s-plus` -> `trivy,kubescape,kube-hunter`
 - `h3retik tools install crack-plus` -> `hashcat,john`
+- `h3retik tools install coop-plus` -> `wildmesh`
 
 ## 1) Runtime and Build Tooling
 
@@ -162,6 +163,7 @@ These wrappers are the preferred, stable entry points for TUI/CLI pipelines.
 - `onchain-rpc-catalog`
 - `onchain-rpc-check`
 - `onchain-address-flow`
+- `onchain-dossier`
 - `onchain-slither`
 - `onchain-mythril`
 - `onchain-foundry-check`
@@ -178,6 +180,15 @@ These wrappers are the preferred, stable entry points for TUI/CLI pipelines.
 - `coop-caldera-api`
 - `coop-caldera-op-report`
 - `coop-caldera-stop`
+- `coop-wildmesh-check`
+- `coop-wildmesh-setup`
+- `coop-wildmesh-up`
+- `coop-wildmesh-status`
+- `coop-wildmesh-discover`
+- `coop-wildmesh-policy-check`
+- `coop-wildmesh-sync-report`
+- `coop-wildmesh-automation`
+- `coop-wildmesh-stop`
 
 ## 12) Safety and Usage Notes
 

@@ -11,7 +11,8 @@ This document explains all operator command surfaces: `h3retik` CLI, TUI `CTRL` 
 - `h3retik build` / `h3retik build-kali` — build TUI / Kali image
 - `h3retik shell` — interactive shell in Kali container
 - `h3retik kali "<cmd>"` — execute one command in Kali
-- `h3retik coop <check|up|status|stop|api|report>` — CALDERA helpers
+- `h3retik coop caldera <check|up|status|stop|api|report>` — CALDERA helpers
+- `h3retik coop wildmesh <check|setup|up|status|discover|policy|sync|automate|stop>` — WildMesh helpers
 - `h3retik target <args...>` — passthrough to `scripts/targetctl.py`
 - `h3retik pipeline <args...>` — passthrough to `scripts/security_pipeline.py`
 - `h3retik observatory <args...>` — passthrough to `scripts/observatory_runner.py`
@@ -110,14 +111,16 @@ Onchain operator flow:
 1. Network/RPC profile selection
 2. RPC catalog + connectivity check
 3. Address flow analysis
-4. Contract auditing/fuzz/symbolic checks
-5. Artifact collection for evidence
+4. Dossier build (triage flags + compliance checklist + case exports)
+5. Contract auditing/fuzz/symbolic checks
+6. Artifact collection for evidence
 
 Wrappers called by FIRE actions:
 
 - `onchain-rpc-catalog`
 - `onchain-rpc-check`
 - `onchain-address-flow`
+- `onchain-dossier`
 - `onchain-slither`
 - `onchain-mythril`
 - `onchain-foundry-check`
@@ -126,7 +129,7 @@ Wrappers called by FIRE actions:
 - `onchain-halmos`
 - `onchain-stack-check`
 
-## 7) Co-op / CALDERA Command Chain
+## 7) Co-op Command Chains
 
 Typical co-op chain:
 
@@ -139,6 +142,19 @@ Typical co-op chain:
 Stop path:
 
 - `coop-caldera-stop`
+
+WildMesh chain:
+
+1. `coop-wildmesh-setup`
+2. `coop-wildmesh-up`
+3. `coop-wildmesh-status`
+4. `coop-wildmesh-discover`
+5. `coop-wildmesh-policy-check`
+6. `coop-wildmesh-sync-report`
+
+Stop path:
+
+- `coop-wildmesh-stop`
 
 ## 8) Manual and Modular Commands
 
@@ -233,7 +249,7 @@ h3retik kali "nuclei -u http://127.0.0.1:3000 -silent"
 CALDERA API probe:
 
 ```bash
-h3retik coop api /api/operations GET
+h3retik coop caldera api /api/operations GET
 ```
 
 ## 11) Operational Notes

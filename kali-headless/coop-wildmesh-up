@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+home="${COOP_WILDMESH_HOME:-/artifacts/coop/wildmesh-node}"
+
+command -v wildmesh >/dev/null 2>&1 || {
+  echo "[coop][wildmesh] binary missing: wildmesh" >&2
+  exit 127
+}
+
+if [[ ! -f "$home/config.json" ]]; then
+  COOP_WILDMESH_HOME="$home" coop-wildmesh-setup
+fi
+
+wildmesh run --detach --home "$home" || true
+sleep 1
+wildmesh status --home "$home" || true
+
+echo "[coop][wildmesh] daemon up"

@@ -1,0 +1,45 @@
+{
+  "name": "@h1dr4/h3retik",
+  "version": "0.0.4",
+  "description": "H3RETIK SOTA red teaming TUI bootstrap CLI",
+  "license": "Apache-2.0",
+  "preferGlobal": true,
+  "bin": {
+    "h3retik": "npm/h3retik.cjs"
+  },
+  "scripts": {
+    "pack:check": "npm pack --dry-run",
+    "release:npm": "npm publish --access public"
+  },
+  "files": [
+    "VERSION",
+    "h3retik",
+    "Dockerfile.kali",
+    "docker-compose.yml",
+    "go.mod",
+    "go.sum",
+    "assets",
+    "cmd",
+    "docs",
+    "internal",
+    "kali-headless",
+    "modules",
+    "scripts/*.sh",
+    "scripts/*.py",
+    "npm/h3retik.cjs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nativ3ai/h3retik.git"
+  },
+  "homepage": "https://github.com/nativ3ai/h3retik",
+  "bugs": {
+    "url": "https://github.com/nativ3ai/h3retik/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

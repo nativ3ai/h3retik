@@ -1,4 +1,4 @@
-# h3retik Capability Matrix (v0.0.3)
+# h3retik Capability Matrix (v0.0.4)
 
 This matrix documents the mounted suite and how each class is exposed in h3retik.
 
@@ -6,7 +6,7 @@ This matrix documents the mounted suite and how each class is exposed in h3retik
 
 - Kali container: `${H3RETIK_KALI_CONTAINER:-h3retik-kali}`
 - Compose service: `kali`
-- Image tag: `${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.3}`
+- Image tag: `${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.4}`
 - Persistent mounts:
   - `/telemetry` (host `telemetry/`)
   - `/artifacts` (host `artifacts/`)
@@ -49,6 +49,7 @@ Optional tool bundles installable from CLI:
 | `onchain-rpc-catalog` | curated RPC endpoint visibility |
 | `onchain-rpc-check` | chain/RPC reachability validation |
 | `onchain-address-flow` | inflow/outflow tracing for target addresses |
+| `onchain-dossier` | investigator dossier pack (flags + chain-of-custody + report artifacts) |
 | `onchain-slither` | static smart-contract analysis |
 | `onchain-mythril` | symbolic/security checks for contracts |
 | `onchain-foundry-check` | Foundry-driven validation flow |
@@ -57,7 +58,15 @@ Optional tool bundles installable from CLI:
 | `onchain-halmos` | symbolic pipeline execution |
 | `onchain-stack-check` | runtime verification for onchain suite |
 
-## Co-op / C2 Suite (CALDERA)
+Map/telemetry behavior:
+
+- `ARCH` map in `onchain` scope builds a live entity tree from `onchain-address-flow` artifacts.
+- Actor/token pivots are generated from flow telemetry (`top_in_counterparties`, `top_out_counterparties`, `top_tokens`).
+- Running flow actions appends normalized onchain loot entries (`onchain-flow`, `onchain-actor`, `onchain-token`) for LOOT + MAP sync.
+- Flow snapshots include per-token/per-actor amount summaries (`in/out/net`) and feed directly into map node details.
+- `onchain-dossier` emits investigator artifacts (`dossier_json`, `dossier_md`) with triage flags + chain-of-custody hashes.
+
+## Co-op / Collaboration Suite
 
 | Wrapper | Purpose |
 |---|---|
@@ -67,6 +76,15 @@ Optional tool bundles installable from CLI:
 | `coop-caldera-api` | generic authenticated API call helper (`KEY` header) |
 | `coop-caldera-op-report` | build operation+agent snapshot artifact |
 | `coop-caldera-stop` | stop CALDERA process cleanly |
+| `coop-wildmesh-check` | validate WildMesh binary/config/runtime wiring |
+| `coop-wildmesh-setup` | bootstrap WildMesh node + default channel |
+| `coop-wildmesh-up` | start detached WildMesh daemon |
+| `coop-wildmesh-status` | summarize daemon/profile/peer/channel state |
+| `coop-wildmesh-discover` | force discovery pulse + peer browse |
+| `coop-wildmesh-policy-check` | enforce collaboration policy + opsec guardrail |
+| `coop-wildmesh-sync-report` | publish telemetry summary + save coop artifact |
+| `coop-wildmesh-automation` | repeatable automation tick/loop (policy + sync) |
+| `coop-wildmesh-stop` | stop detached WildMesh daemon |
 
 ## Control and Telemetry Contract
 

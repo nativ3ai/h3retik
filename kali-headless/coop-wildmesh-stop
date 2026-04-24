@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+home="${COOP_WILDMESH_HOME:-/artifacts/coop/wildmesh-node}"
+
+command -v wildmesh >/dev/null 2>&1 || {
+  echo "[coop][wildmesh] binary missing: wildmesh" >&2
+  exit 127
+}
+
+if wildmesh status --home "$home" 2>/dev/null | grep -qi 'daemon_ready.*true'; then
+  pkill -f "wildmesh run" || true
+  sleep 1
+  pkill -9 -f "wildmesh run" || true
+  echo "[coop][wildmesh] daemon stopped"
+else
+  echo "[coop][wildmesh] daemon not running"
+fi
