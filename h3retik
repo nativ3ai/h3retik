@@ -272,6 +272,12 @@ Usage:
   h3retik target <args...>         # passthrough to scripts/targetctl.py
   h3retik pipeline <args...>       # passthrough to scripts/security_pipeline.py
   h3retik observatory <args...>    # passthrough to scripts/observatory_runner.py
+  h3retik run <flags...>           # cloud headless single-shot run (submit+execute)
+  h3retik estimate <flags...>      # cloud run cost estimate quote
+  h3retik submit <flags...>        # cloud job submit (pending payment)
+  h3retik status --job <id>        # cloud job status
+  h3retik logs --job <id>          # cloud job logs
+  h3retik artifacts --job <id>     # cloud job artifacts
   h3retik import-runs <path> [--all] # import saved campaigns into local telemetry/runs
   h3retik tools list               # show optional tool bundles + installed status (inside kali)
   h3retik tools install <bundle|tool1,tool2,...> [--strict] # install optional tools in kali on demand
@@ -293,6 +299,8 @@ Env overrides:
   H3RETIK_SKIP_UP=1                # skip docker compose up (attach to existing container)
   H3RETIK_RUNTIME_MODE             # bundled|attach|local (default: bundled)
   H3RETIK_UPDATE_CHECK=0           # disable startup update check prompt
+  H3RETIK_CLOUD_API                # cloud API base URL for run/estimate/submit/status/logs/artifacts
+  H3RETIK_PAYMENT_RECEIVER         # default: 0x99EEDcE3C87Adf3dE1c9B8B08F1810C168D6E039
 EOF
 }
 
@@ -519,6 +527,12 @@ case "$cmd" in
     shift || true
     ensure_base_deps
     run_root python3 ./scripts/observatory_runner.py "$@"
+    ;;
+  run|estimate|submit|status|logs|artifacts)
+    ensure_base_deps
+    sub="$cmd"
+    shift || true
+    run_root python3 ./scripts/cloudctl.py "$sub" "$@"
     ;;
   tools)
     shift || true

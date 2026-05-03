@@ -188,6 +188,12 @@ h3retik build-kali               # build kali image
 h3retik target ...               # scripts/targetctl.py passthrough
 h3retik pipeline ...             # scripts/security_pipeline.py passthrough
 h3retik observatory ...          # scripts/observatory_runner.py passthrough
+h3retik estimate --target https://target.tld --lane web --pipeline quick --max-minutes 12 --budget-usdc 3 --json
+h3retik submit --target https://target.tld --lane web --pipeline quick --max-minutes 12 --budget-usdc 3 --json
+h3retik run --target https://target.tld --lane web --pipeline quick --max-minutes 12 --budget-usdc 3 --json
+h3retik status --job job-xxxxxxxxxxxx --json
+h3retik logs --job job-xxxxxxxxxxxx --json
+h3retik artifacts --job job-xxxxxxxxxxxx --json
 h3retik import-runs <path>       # import campaign telemetry into local telemetry/runs
 h3retik tools list               # list optional on-demand tools in kali
 h3retik tools install recon-plus # install optional recon tool bundle in kali
@@ -220,6 +226,8 @@ h3retik doctor                   # runtime checks
 - To bypass first-run setup in automation, set `H3RETIK_NO_SETUP_WIZARD=1`.
 - Setup state/config is persisted in `~/.config/h3retik` (override with `H3RETIK_CONFIG_DIR`).
 - TUI fast mode keys in CTRL: `o` OSINT, `y` LOCAL, `c` ONCHAIN, `g` CO-OP.
+- Cloud API target for headless jobs: `H3RETIK_CLOUD_API=https://api.<your-domain>`
+- Cloud payment receiver default: `0x99EEDcE3C87Adf3dE1c9B8B08F1810C168D6E039` (override with `H3RETIK_PAYMENT_RECEIVER`)
 
 ## Documentation Map (Canonical)
 
