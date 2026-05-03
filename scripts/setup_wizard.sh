@@ -6,7 +6,7 @@ CONFIG_DIR="${H3RETIK_CONFIG_DIR:-$HOME/.config/h3retik}"
 CONFIG_FILE="$CONFIG_DIR/setup.env"
 SETUP_MARKER="$CONFIG_DIR/setup.complete"
 KALI_CONTAINER_DEFAULT="${H3RETIK_KALI_CONTAINER:-h3retik-kali}"
-KALI_IMAGE_DEFAULT="${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.4}"
+KALI_IMAGE_DEFAULT="${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.5}"
 
 mkdir -p "$CONFIG_DIR"
 
@@ -165,10 +165,17 @@ try_install_docker() {
 show_info "H3RETIK guided setup\n\nThis wizard configures runtime, dependencies, and optional tool bundles.\nYou can always rerun with: h3retik setup"
 show_info "Go requirement clarity:\n- Go is needed only to compile juicetui when no prebuilt binary is available.\n- If a prebuilt bin/juicetui exists, H3RETIK can run without Go.\n- Recommended: keep Go installed for h3retik build/update resilience."
 
+runtime_choice=$(ask_menu "Select runtime mode" \
+  bundled "Bundled H3RETIK Kali container (recommended)" \
+  attach "Attach TUI to an existing Kali container" \
+  local "Local tools only (no Kali container)") || exit 1
+
 missing=()
-ensure_bin docker || missing+=("docker")
-ensure_bin python3 || missing+=("python3")
-ensure_bin go || missing+=("go")
+if ensure_bin python3; then :; else missing+=("python3"); fi
+if ensure_bin go; then :; else missing+=("go"); fi
+if [[ "$runtime_choice" != "local" ]]; then
+  if ensure_bin docker; then :; else missing+=("docker"); fi
+fi
 
 if [[ ${#missing[@]} -gt 0 ]]; then
   show_info "Missing dependencies detected: ${missing[*]}"
@@ -189,16 +196,14 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   fi
 fi
 
-runtime_choice=$(ask_menu "Select runtime mode" \
-  bundled "Bundled H3RETIK Kali container (recommended)" \
-  attach "Attach TUI to an existing Kali container") || exit 1
-
 kali_container="$KALI_CONTAINER_DEFAULT"
 kali_image="$KALI_IMAGE_DEFAULT"
 skip_up="0"
 
 if [[ "$runtime_choice" == "attach" ]]; then
   kali_container=$(ask_input "Existing container name" "$KALI_CONTAINER_DEFAULT") || exit 1
+  skip_up="1"
+elif [[ "$runtime_choice" == "local" ]]; then
   skip_up="1"
 else
   kali_container=$(ask_input "Bundled container name" "$KALI_CONTAINER_DEFAULT") || exit 1
@@ -210,6 +215,7 @@ cat > "$CONFIG_FILE" <<CFG
 export H3RETIK_CONFIG_DIR="$CONFIG_DIR"
 export H3RETIK_KALI_CONTAINER="$kali_container"
 export H3RETIK_KALI_IMAGE="$kali_image"
+export H3RETIK_RUNTIME_MODE="$runtime_choice"
 CFG
 
 if [[ "$runtime_choice" == "bundled" ]]; then
@@ -224,9 +230,14 @@ if ask_yes_no "Install optional bundles now? (You can also do this later with: h
     ad-plus "AD Plus (kerbrute/ldapdomaindump/certipy/evil-winrm)" \
     k8s-plus "K8S Plus (trivy/kubescape/kube-hunter)" \
     crack-plus "Crack Plus (hashcat/john)" \
-    coop-plus "Co-op Plus (wildmesh)") || bundle=""
+    coop-plus "Co-op Plus (wildmesh)" \
+    local-plus "Local Plus (linpeas/lse/pspy/semgrep/gitleaks/trivy/grype)") || bundle=""
   if [[ -n "$bundle" ]]; then
-    H3RETIK_KALI_CONTAINER="$kali_container" "$ROOT/h3retik" tools install "$bundle" || true
+    if [[ "$runtime_choice" == "local" ]]; then
+      show_info "Optional tool bundle install requires Kali runtime. Skipping now.\nYou can still add local user tools with:\n  h3retik modules add-local-tool ..."
+    else
+      H3RETIK_KALI_CONTAINER="$kali_container" "$ROOT/h3retik" tools install "$bundle" || true
+    fi
   fi
 fi
 

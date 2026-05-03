@@ -198,6 +198,7 @@ h3retik tools install crack-plus
 h3retik tools install coop-plus    # install wildmesh collaboration runtime
 h3retik tools install local-plus   # install local redteam suite (privesc/binary/code/internal)
 h3retik tools install local-plus --strict # fail if any requested local tool is missing
+h3retik modules add-local-tool --name "Semgrep Quick" --cmd "semgrep --config auto ." --category Code
 h3retik kali "<cmd>"             # execute command in kali container
 h3retik local stack-check        # local lane stack check wrappers
 h3retik local privesc /workspace # local lane privesc wrappers
@@ -212,6 +213,8 @@ h3retik doctor                   # runtime checks
 
 - If you run the global launcher (`~/.local/bin/h3retik`), `h3retik build` rebuilds the TUI in the active installed root (`~/.local/share/h3retik/<version>`).
 - Use `h3retik update` to pull latest upstream changes and refresh the installed runtime.
+- On TUI startup, h3retik checks upstream version and prompts: update now, ignore this version, or continue.
+- Setup wizard supports runtime modes: `bundled` (recommended), `attach`, `local` (no Kali/Docker).
 - To bypass first-run setup in automation, set `H3RETIK_NO_SETUP_WIZARD=1`.
 - Setup state/config is persisted in `~/.config/h3retik` (override with `H3RETIK_CONFIG_DIR`).
 - TUI fast mode keys in CTRL: `o` OSINT, `y` LOCAL, `c` ONCHAIN, `g` CO-OP.
