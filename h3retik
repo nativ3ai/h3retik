@@ -186,6 +186,72 @@ EOF
   echo "added module: $file"
 }
 
+list_local_tool_modules() {
+  local cfg="${H3RETIK_CONFIG_DIR:-$HOME/.config/h3retik}"
+  local mods="$cfg/modules"
+  if [[ ! -d "$mods" ]]; then
+    echo "no user modules found ($mods)"
+    return 0
+  fi
+  H3RETIK_MODULE_DIR="$mods" python3 - <<'PY'
+import glob
+import json
+import os
+import sys
+
+mods = os.environ["H3RETIK_MODULE_DIR"]
+files = sorted(glob.glob(os.path.join(mods, "user-*.json")))
+if not files:
+    print(f"no user modules found ({mods}/user-*.json)")
+    sys.exit(0)
+for path in files:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            item = json.load(f)
+    except Exception:
+        print(f"- id=unknown label=unknown category=unknown mode=unknown runtime=unknown file={os.path.basename(path)}")
+        continue
+    print(
+        f"- id={item.get('id','unknown')} "
+        f"label={item.get('label','unknown')} "
+        f"category={item.get('group','unknown')} "
+        f"mode={item.get('mode','unknown')} "
+        f"runtime={item.get('runtime','unknown')}"
+    )
+PY
+}
+
+remove_local_tool_module() {
+  local module_id=""
+  local yes=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id) module_id="${2:-}"; shift 2 ;;
+      --yes|-y) yes=1; shift ;;
+      *) die "unknown option for remove: $1" ;;
+    esac
+  done
+  [[ -n "$module_id" ]] || die "missing --id"
+  module_id="${module_id%.json}"
+  [[ "$module_id" == user-* ]] || die "refusing to remove non-user module id: $module_id"
+  local cfg="${H3RETIK_CONFIG_DIR:-$HOME/.config/h3retik}"
+  local file="$cfg/modules/$module_id.json"
+  [[ -f "$file" ]] || die "module not found: $module_id"
+  if [[ "$yes" != "1" ]]; then
+    if [[ -t 0 ]]; then
+      read -r -p "Remove module '$module_id'? [y/N]: " answer
+      case "${answer,,}" in
+        y|yes) ;;
+        *) echo "aborted"; return 1 ;;
+      esac
+    else
+      die "confirmation required in non-interactive mode (pass --yes)"
+    fi
+  fi
+  rm -f "$file"
+  echo "removed module: $module_id"
+}
+
 usage() {
   cat <<EOF
 h3retik v$VERSION
@@ -210,6 +276,8 @@ Usage:
   h3retik tools list               # show optional tool bundles + installed status (inside kali)
   h3retik tools install <bundle|tool1,tool2,...> [--strict] # install optional tools in kali on demand
   h3retik modules add-local-tool --name NAME --cmd CMD [--category CAT] [--mode MODE] [--runtime local|kali]
+  h3retik modules list             # list user-registered local modules
+  h3retik modules remove --id user-<name> [--yes] # remove a user-registered module
   h3retik setup                    # guided first-run setup wizard
   h3retik reset                    # reset telemetry + custom target
   h3retik doctor                   # quick environment + runtime checks
@@ -736,8 +804,14 @@ fi
       add-local-tool)
         add_local_tool_module "$@"
         ;;
+      list)
+        list_local_tool_modules
+        ;;
+      remove)
+        remove_local_tool_module "$@"
+        ;;
       *)
-        die "unknown modules subcommand: $sub (use: add-local-tool)"
+        die "unknown modules subcommand: $sub (use: add-local-tool|list|remove)"
         ;;
     esac
     ;;

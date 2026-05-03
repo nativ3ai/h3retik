@@ -199,6 +199,8 @@ h3retik tools install coop-plus    # install wildmesh collaboration runtime
 h3retik tools install local-plus   # install local redteam suite (privesc/binary/code/internal)
 h3retik tools install local-plus --strict # fail if any requested local tool is missing
 h3retik modules add-local-tool --name "Semgrep Quick" --cmd "semgrep --config auto ." --category Code
+h3retik modules list               # list user-registered modules (~/.config/h3retik/modules)
+h3retik modules remove --id user-semgrep-quick --yes # remove a user module
 h3retik kali "<cmd>"             # execute command in kali container
 h3retik local stack-check        # local lane stack check wrappers
 h3retik local privesc /workspace # local lane privesc wrappers
