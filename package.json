@@ -1,6 +1,6 @@
 {
   "name": "@h1dr4/h3retik",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "H3RETIK SOTA red teaming TUI bootstrap CLI",
   "license": "Apache-2.0",
   "preferGlobal": true,

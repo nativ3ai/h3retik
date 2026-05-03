@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /artifacts/local
+stamp="$(date -u +%Y%m%d-%H%M%S)"
+out="/artifacts/local/privesc-${stamp}.txt"
+target="${1:-/workspace}"
+{
+  echo "[local] privesc target=$target"
+  [ -x /usr/local/bin/linpeas ] && /usr/local/bin/linpeas -a 2>/dev/null | head -n 200 || echo "[warn] linpeas missing"
+  command -v lse >/dev/null 2>&1 && lse -l1 2>/dev/null | head -n 120 || echo "[warn] lse missing"
+  command -v pspy64 >/dev/null 2>&1 && pspy64 -pf -i 500 -r 2>/dev/null | head -n 80 || echo "[warn] pspy64 missing"
+  command -v linux-exploit-suggester >/dev/null 2>&1 && linux-exploit-suggester 2>/dev/null | head -n 120 || echo "[warn] linux-exploit-suggester missing"
+} | tee "$out"
+echo "[local] artifact=$out"

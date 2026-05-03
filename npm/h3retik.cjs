@@ -6,9 +6,10 @@ const https = require("https");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
+const readline = require("readline");
 
 const ROOT = path.resolve(__dirname, "..");
-const VERSION = fs.readFileSync(path.join(ROOT, "VERSION"), "utf8").trim() || "0.0.4";
+const VERSION = fs.readFileSync(path.join(ROOT, "VERSION"), "utf8").trim() || "0.0.5";
 const OWNER = process.env.H3RETIK_RELEASE_OWNER || "nativ3ai";
 const REPO = process.env.H3RETIK_RELEASE_REPO || "h3retik";
 const TAG = process.env.H3RETIK_RELEASE_TAG || `v${VERSION}`;
@@ -138,10 +139,112 @@ function runUnixLauncher(args) {
   child.on("exit", (code) => process.exit(code ?? 0));
 }
 
+function unixLauncherPath() {
+  return fs.existsSync(GLOBAL_LAUNCHER) ? GLOBAL_LAUNCHER : path.join(ROOT, "h3retik");
+}
+
+function runUnixLauncherSync(args, envExtra = {}) {
+  const launcher = unixLauncherPath();
+  runOrThrow(launcher, args, {
+    env: { ...process.env, ...envExtra }
+  });
+}
+
+function runUnixLauncherAsync(args, envExtra = {}) {
+  const launcher = unixLauncherPath();
+  const child = spawn(launcher, args, {
+    stdio: "inherit",
+    env: { ...process.env, ...envExtra }
+  });
+  child.on("exit", (code) => process.exit(code ?? 0));
+}
+
+function ask(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(String(answer || "").trim());
+    });
+  });
+}
+
+function printInstallProfiles() {
+  console.log(`h3retik v${VERSION} modular setup\n`);
+  console.log("Choose install profile:");
+  console.log("  1) TUI only (no Docker auto-up)");
+  console.log("  2) Full Docker runtime + TUI");
+  console.log("  3) Headless CLI only (no TUI launch)");
+  console.log("  4) Custom (open native setup wizard)");
+}
+
+async function chooseProfileInteractive() {
+  printInstallProfiles();
+  const ans = (await ask("Select profile [1-4] (default 2): ")).toLowerCase();
+  if (ans === "" || ans === "2" || ans === "full") return "full";
+  if (ans === "1" || ans === "tui" || ans === "tui-only") return "tui-only";
+  if (ans === "3" || ans === "headless" || ans === "cli") return "headless";
+  return "custom";
+}
+
+function parseProfileArg(args) {
+  const idx = args.findIndex((arg) => arg === "--profile");
+  if (idx === -1) return { profile: "", args };
+  const value = (args[idx + 1] || "").trim().toLowerCase();
+  const next = [...args.slice(0, idx), ...args.slice(idx + 2)];
+  if (value === "tui-only" || value === "tui") return { profile: "tui-only", args: next };
+  if (value === "full" || value === "docker") return { profile: "full", args: next };
+  if (value === "headless" || value === "cli") return { profile: "headless", args: next };
+  if (value === "custom" || value === "wizard") return { profile: "custom", args: next };
+  return { profile: "", args: next };
+}
+
+function parseYesArg(args) {
+  const next = [];
+  let yes = false;
+  for (const arg of args) {
+    if (arg === "--yes" || arg === "-y") {
+      yes = true;
+      continue;
+    }
+    next.push(arg);
+  }
+  return { yes, args: next };
+}
+
+async function runGuidedInstallUnix(rawArgs) {
+  const yesParsed = parseYesArg(rawArgs);
+  const parsed = parseProfileArg(yesParsed.args);
+  const profile = parsed.profile || (yesParsed.yes ? "full" : await chooseProfileInteractive());
+  runInstallScript();
+  if (profile === "custom") {
+    runUnixLauncherAsync(["setup"]);
+    return;
+  }
+  if (profile === "tui-only") {
+    console.log("profile=tui-only :: launching TUI without docker auto-up");
+    runUnixLauncherAsync(["--skip-up", "tui"]);
+    return;
+  }
+  if (profile === "headless") {
+    console.log("profile=headless :: preparing runtime only");
+    runUnixLauncherSync(["up"]);
+    console.log("runtime ready. next:");
+    console.log("  h3retik doctor");
+    console.log("  h3retik pipeline --target <url> --profile quick");
+    return;
+  }
+  console.log("profile=full :: preparing docker runtime + launching TUI");
+  runUnixLauncherSync(["up"]);
+  runUnixLauncherAsync(["tui"]);
+}
+
 function windowsUsage() {
   console.log(`h3retik v${VERSION}\n`);
   console.log("Windows npm launcher commands:");
   console.log("  h3retik                # start kali + launch TUI");
+  console.log("  h3retik init           # guided modular install/profile setup");
+  console.log("  h3retik setup          # alias of init");
   console.log("  h3retik tui            # launch TUI");
   console.log("  h3retik up             # docker compose up -d kali");
   console.log("  h3retik down           # docker compose down");
@@ -231,6 +334,29 @@ async function runWindowsEntry(rawArgs) {
   const rest = args.slice(1);
 
   switch (cmd) {
+    case "init":
+    case "setup": {
+      const yesParsed = parseYesArg(rest);
+      const parsed = parseProfileArg(yesParsed.args);
+      const profile = parsed.profile || (yesParsed.yes ? "full" : await chooseProfileInteractive());
+      if (profile === "custom") {
+        console.log("custom profile on Windows npm launcher is equivalent to full runtime flow.");
+      }
+      if (profile === "tui-only") {
+        windowsRunTUI(parsed.args);
+        return;
+      }
+      if (profile === "headless") {
+        windowsEnsureRuntime();
+        console.log("runtime ready. next:");
+        console.log("  h3retik doctor");
+        console.log("  h3retik kali \"<cmd>\"");
+        return;
+      }
+      windowsEnsureRuntime();
+      windowsRunTUI(parsed.args);
+      return;
+    }
     case "tui":
       if (!skipUp) windowsEnsureRuntime();
       windowsRunTUI(rest);
@@ -277,15 +403,21 @@ async function runWindowsEntry(rawArgs) {
 }
 
 async function main() {
+  const argv = process.argv.slice(2);
+  const cmd = (argv[0] || "").toLowerCase();
   if (!IS_WINDOWS) {
     await ensurePrebuiltBinary();
     if (!fs.existsSync(GLOBAL_LAUNCHER)) {
       runInstallScript();
     }
-    runUnixLauncher(process.argv.slice(2));
+    if (cmd === "init" || cmd === "setup") {
+      await runGuidedInstallUnix(argv.slice(1));
+      return;
+    }
+    runUnixLauncher(argv);
     return;
   }
-  await runWindowsEntry(process.argv.slice(2));
+  await runWindowsEntry(argv);
 }
 
 main().catch((error) => {

@@ -11,6 +11,7 @@ If you attach h3retik to your own Kali container/image, these are the minimum re
 - OSINT wrappers: `osint-seed-harvest`, `osint-deep-bbot` or `osint-deep-spiderfoot`, `osint-reconng`, `osint-rengine`, `osint-stack-check`.
 - Onchain wrappers: `onchain-rpc-catalog`, `onchain-rpc-check`, `onchain-address-flow`, `onchain-dossier`, `onchain-slither`, `onchain-mythril`, `onchain-foundry-check`, `onchain-echidna`, `onchain-medusa`, `onchain-halmos`, `onchain-stack-check`.
 - Co-op wrappers: `coop-caldera-*`, `coop-wildmesh-*`.
+- Local wrappers: `local-stack-check`, `local-privesc`, `local-binary-triage`, `local-package-audit`, `local-internal-recon`.
 
 Behavior in TUI:
 
@@ -25,6 +26,12 @@ Optional lane bundles (install on demand):
 - `h3retik tools install k8s-plus` -> `trivy,kubescape,kube-hunter`
 - `h3retik tools install crack-plus` -> `hashcat,john`
 - `h3retik tools install coop-plus` -> `wildmesh`
+- `h3retik tools install local-plus` -> `linpeas,lse,pspy,linux-exploit-suggester,checksec,radare2,semgrep,gitleaks,trivy,grype`
+
+Strict deterministic install:
+
+- `h3retik tools install <bundle|tool1,tool2,...> --strict`
+- exits non-zero if any requested tool remains missing
 
 ## 1) Runtime and Build Tooling
 

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /artifacts/local
+stamp="$(date -u +%Y%m%d-%H%M%S)"
+out="/artifacts/local/binary-triage-${stamp}.txt"
+target="${1:-/workspace}"
+{
+  echo "[local] binary triage target=$target"
+  mapfile -t bins < <(find "$target" -maxdepth 4 -type f -perm -111 2>/dev/null | head -n 20)
+  if [ "${#bins[@]}" -eq 0 ]; then
+    echo "[warn] no executable files discovered"
+  fi
+  for f in "${bins[@]}"; do
+    echo "--- $f"
+    command -v file >/dev/null 2>&1 && file "$f" || true
+    command -v checksec >/dev/null 2>&1 && checksec --file="$f" || true
+    command -v rabin2 >/dev/null 2>&1 && rabin2 -I "$f" | head -n 40 || true
+    strings "$f" 2>/dev/null | head -n 40 || true
+  done
+} | tee "$out"
+echo "[local] artifact=$out"

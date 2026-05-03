@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /artifacts/local
+out="/artifacts/local/stack-check-$(date -u +%Y%m%d-%H%M%S).txt"
+{
+  echo "[local] stack check"
+  for t in linpeas lse pspy64 checksec rabin2 semgrep gitleaks trivy grype smbclient ldapsearch rpcclient netexec; do
+    if command -v "$t" >/dev/null 2>&1; then
+      echo "[ok] $t -> $(command -v "$t")"
+    else
+      echo "[missing] $t"
+    fi
+  done
+} | tee "$out"
+echo "[local] artifact=$out"

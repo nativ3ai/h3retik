@@ -66,6 +66,23 @@ Map/telemetry behavior:
 - Flow snapshots include per-token/per-actor amount summaries (`in/out/net`) and feed directly into map node details.
 - `onchain-dossier` emits investigator artifacts (`dossier_json`, `dossier_md`) with triage flags + chain-of-custody hashes.
 
+## Local Redteam Suite
+
+| Wrapper | Purpose |
+|---|---|
+| `local-stack-check` | verify local-lane tooling coverage and runtime availability |
+| `local-privesc` | run local privilege-escalation recon (`linpeas`,`lse`,`pspy`,`linux-exploit-suggester`) |
+| `local-binary-triage` | executable triage and hardening metadata (`checksec`,`rabin2`,`strings`) |
+| `local-package-audit` | local repo/package audit (`semgrep`,`gitleaks`,`trivy fs`,`grype`) |
+| `local-internal-recon` | local/internal network baseline recon (`smb`,`ldap`,`rpc`,`netexec`) |
+
+User-owned modular actions:
+
+- Repo modules: `modules/local/*.json`
+- User modules: `~/.config/h3retik/modules/*.json`
+- Optional override dir: `$H3RETIK_MODULES_DIR`
+- Each module keeps a `group` category label for telemetry tracking and FIRE lane categorization.
+
 ## Co-op / Collaboration Suite
 
 | Wrapper | Purpose |

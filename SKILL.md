@@ -11,7 +11,7 @@ This document is meant to be pasted into an LLM/system prompt. It teaches an age
 
 ## Mission
 
-Run exploit, OSINT, onchain, and co-op/C2 workflows from one control plane:
+Run exploit, local-file/package, OSINT, onchain, and co-op/C2 workflows from one control plane:
 
 - Interactive: `h3retik` (TUI).
 - Headless orchestration: `h3retik pipeline ...`.
@@ -35,7 +35,7 @@ If you cannot locate files, ask the operator for the repo path or a copy/paste o
 
 - Root launcher: `h3retik`
 - Compose service: `kali`
-- Kali image tag: `h3retik/kali:v0.0.3`
+- Kali image tag: `h3retik/kali:v0.0.4`
 - Kali container name (default): `h3retik-kali` (`H3RETIK_KALI_CONTAINER` override)
 - Telemetry bus: `telemetry/` (append-only JSONL streams)
 - Artifacts store: `artifacts/` (files referenced by loot/evidence)
@@ -115,8 +115,9 @@ If you are asked “how do I drive it like a pro?”, the answer is: set scope �
 
 ## Where Pipelines and Tools Live (Repo-Relative)
 
-- Module manifests (operator actions): `modules/exploit/*.json`
+- Module manifests (operator actions): `modules/exploit/*.json`, `modules/local/*.json`
 - Kali headless wrappers:
+  - Local: `kali-headless/local-*`
   - OSINT: `kali-headless/osint-*`
   - Onchain: `kali-headless/onchain-*`
   - Co-op/C2: `kali-headless/coop-*`
@@ -180,6 +181,16 @@ To add a new operator action:
 Avoid:
 - embedding a specific host/path in templates (derive from `{{target_url}}` and discovered loot instead)
 - “magic” success assumptions without verification and telemetry
+
+## Canonical Docs Order
+
+Use this order to avoid stale/repeated guidance:
+
+1. `README.md`
+2. `docs/START_HERE.md`
+3. `docs/TUI_OPERATOR_REFERENCE.md`
+4. `docs/PIPELINES_AND_COMMANDS.md`
+5. `docs/CAPABILITIES.md`
 
 ## Notes
 

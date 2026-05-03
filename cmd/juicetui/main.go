@@ -44,6 +44,7 @@ type keyMap struct {
 	RawToggle   key.Binding
 	DensityMode key.Binding
 	ModeToggle  key.Binding
+	LocalToggle key.Binding
 	ChainToggle key.Binding
 	CoopToggle  key.Binding
 	MapToggle   key.Binding
@@ -56,13 +57,13 @@ type keyMap struct {
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.NextPane, k.PrevPane, k.Select, k.Fire, k.Replay, k.RawToggle, k.DensityMode, k.ModeToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Pin, k.Note, k.Jump, k.Unsafe, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.NextPane, k.PrevPane, k.Select, k.Fire, k.Replay, k.RawToggle, k.DensityMode, k.ModeToggle, k.LocalToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Pin, k.Note, k.Jump, k.Unsafe, k.Refresh, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Left, k.Right, k.NextPane, k.PrevPane},
-		{k.NextOption, k.PrevOption, k.Select, k.Fire, k.ScrollUp, k.ScrollDown, k.Replay, k.RawToggle, k.DensityMode, k.ModeToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Pin, k.Note, k.Jump, k.Unsafe, k.Refresh, k.Quit},
+		{k.NextOption, k.PrevOption, k.Select, k.Fire, k.ScrollUp, k.ScrollDown, k.Replay, k.RawToggle, k.DensityMode, k.ModeToggle, k.LocalToggle, k.ChainToggle, k.CoopToggle, k.MapToggle, k.Pin, k.Note, k.Jump, k.Unsafe, k.Refresh, k.Quit},
 	}
 }
 
@@ -455,22 +456,6 @@ var taxonomyOrder = []taxonomyCategory{
 	{Name: "REPORTING", Subcategories: []string{"INTEL_EXPORT", "ACTION_BRIEF"}},
 }
 
-var osintTaxonomyPoints = []osintTaxonomyPoint{
-	{Key: "seed_media_buffer", Token: "<<SEED_INPUT>>", Marker: "SEED INPUT", Phase: "INPUT", Description: "Initial seed intake for entities, infrastructure, media, and context notes."},
-	{Key: "collection_app", Token: "<<COLLECTION_LAYER>>", Marker: "COLLECTION LAYER", Phase: "COLLECTION", Description: "Automated collectors and wrappers executed in Kali for raw intake."},
-	{Key: "function_key", Token: "<<TARGET_PROFILE>>", Marker: "TARGET PROFILE", Phase: "INPUT", Description: "Operator target profile, scope, and mission objective selection."},
-	{Key: "input_channel", Token: "<<DISCOVERY>>", Marker: "DISCOVERY", Phase: "DISCOVERY", Description: "Expansion from seed to linked entities, accounts, domains, and infrastructure."},
-	{Key: "main_storage", Token: "<<DATA_STORE>>", Marker: "DATA STORE", Phase: "PROCESSING", Description: "Normalized storage path for collected telemetry and evidence correlation."},
-	{Key: "analyst_interface", Token: "<<VERIFICATION_DESK>>", Marker: "VERIFICATION DESK", Phase: "VALIDATION", Description: "Analyst-facing validation view for confirmation and gap tracking."},
-	{Key: "normal_flow", Token: "<<PIPELINE_FLOW>>", Marker: "PIPELINE FLOW", Phase: "COLLECTION", Description: "Expected seed → discovery → collection progression for the current entity."},
-	{Key: "cpu_core", Token: "<<ANALYSIS_CORE>>", Marker: "ANALYSIS CORE", Phase: "ANALYSIS", Description: "Correlation and graph analysis stage used for risk scoring and patterning."},
-	{Key: "output_bus", Token: "<<REPORT_OUTPUT>>", Marker: "REPORT OUTPUT", Phase: "REPORTING", Description: "Action brief and reporting output path for investigative handoff."},
-	{Key: "peripherals", Token: "<<SOURCE_ADAPTERS>>", Marker: "SOURCE ADAPTERS", Phase: "COLLECTION", Description: "External APIs, archives, and enrichers feeding additional observations."},
-	{Key: "overflow_guard", Token: "<<RISK_GUARDRAILS>>", Marker: "RISK GUARDRAILS", Phase: "VALIDATION", Description: "Pipeline guardrail lane for missing prerequisites and execution failures."},
-	{Key: "debug_tool", Token: "<<EVIDENCE_REVIEW>>", Marker: "EVIDENCE REVIEW", Phase: "VALIDATION", Description: "Consistency review checkpoint for replay and evidence integrity."},
-	{Key: "backup_path", Token: "<<ARCHIVE_PATH>>", Marker: "ARCHIVE PATH", Phase: "REPORTING", Description: "Evidence archival/export checkpoint before final report generation."},
-}
-
 type lootFogStage struct {
 	Key         string
 	Title       string
@@ -486,8 +471,6 @@ var lootFogStages = []lootFogStage{
 	{Key: "access", Title: "Infraorbital Access Chain", Description: "Validate auth paths and establish reusable access footholds.", Group: "Access", Requires: []string{"breach"}},
 	{Key: "objective", Title: "Mandibular Objective Control", Description: "Escalate, tamper, and complete objective-grade access.", Group: "Objective", Requires: []string{"access", "tamper"}},
 }
-
-var lootFogVisualOrder = []string{"surface", "recon", "breach", "access", "objective"}
 
 type model struct {
 	width                   int
@@ -677,6 +660,7 @@ func initialModel(root string) model {
 			RawToggle:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "loot raw")),
 			DensityMode: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "compact/deep")),
 			ModeToggle:  key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "mode/scope")),
+			LocalToggle: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "local")),
 			ChainToggle: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "onchain")),
 			CoopToggle:  key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "co-op")),
 			MapToggle:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "arch map")),
@@ -1308,6 +1292,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resetDetailScroll()
 			m.taxonomySubMode = false
 			m.taxonomySubIdx = 0
+			if m.tab == 3 {
+				m.focusTopLootByCurrentOrder()
+			}
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Refresh):
@@ -1415,6 +1402,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.tab = (m.tab + 1) % 5
 				m.resetDetailScroll()
+				if m.tab == 3 {
+					m.focusTopLootByCurrentOrder()
+				}
 			}
 		case key.Matches(msg, m.keys.Left):
 			if m.tab == 0 && m.archMapMode && m.archMapSupportsCurrentScope() {
@@ -1427,6 +1417,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.tab = (m.tab + 4) % 5
 				m.resetDetailScroll()
+				if m.tab == 3 {
+					m.focusTopLootByCurrentOrder()
+				}
 			}
 		case key.Matches(msg, m.keys.Up):
 			if m.tab == 0 && m.archMapMode && m.archMapSupportsCurrentScope() {
@@ -1509,12 +1502,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case msg.String() == "o" || msg.String() == "O":
 			m.applyModeHotkey()
+		case msg.String() == "t" || msg.String() == "T":
+			if m.tab == 3 {
+				m.applyModeHotkey()
+			}
 		case msg.String() == "c" || msg.String() == "C":
 			m.applyChainHotkey()
 		case msg.String() == "g" || msg.String() == "G":
 			m.applyCoopHotkey()
 		case key.Matches(msg, m.keys.ModeToggle):
 			m.applyModeHotkey()
+		case key.Matches(msg, m.keys.LocalToggle):
+			m.applyLocalHotkey()
 		case key.Matches(msg, m.keys.ChainToggle):
 			m.applyChainHotkey()
 		case key.Matches(msg, m.keys.CoopToggle):
@@ -1622,8 +1621,8 @@ func (m *model) move(delta int) {
 		}
 	case 3:
 		if m.lootFogMode {
-			if len(lootFogVisualOrder) > 0 {
-				m.lootFogStageIdx = clamp(m.lootFogStageIdx+delta, 0, len(lootFogVisualOrder)-1)
+			if len(m.lootFogStagesLive()) > 0 {
+				m.lootFogStageIdx = clamp(m.lootFogStageIdx+delta, 0, len(m.lootFogStagesLive())-1)
 				m.lootFogActionIdx = 0
 			}
 			m.lootDetailScroll = 0
@@ -3395,6 +3394,23 @@ func (m *model) applyCoopHotkey() {
 	m.controlStatus = "ok :: CTRL mode -> " + strings.ToUpper(m.fireMode)
 }
 
+func (m *model) applyLocalHotkey() {
+	if m.tab != 4 {
+		return
+	}
+	if strings.EqualFold(m.fireMode, "local") {
+		m.fireMode = "exploit"
+	} else {
+		m.fireMode = "local"
+	}
+	m.exploitPipelineMenu = false
+	m.controlSection = 2
+	m.fireIdx = 0
+	m.ensureCommandSelection()
+	m.ensureFindingSelection()
+	m.controlStatus = "ok :: CTRL mode -> " + strings.ToUpper(m.fireMode)
+}
+
 func (m *model) resetDetailScroll() {
 	m.commandDetailScroll = 0
 	m.findingDetailScroll = 0
@@ -3417,6 +3433,17 @@ func (m *model) ensureLootSelection() {
 			}
 			return
 		}
+	}
+	m.lootIdx = order[0]
+	m.lootActionIdx = 0
+}
+
+func (m *model) focusTopLootByCurrentOrder() {
+	order := lootDisplayOrderByMode(m.loot, m.lootOSINTMode, m.lootOnchainMode)
+	if len(order) == 0 {
+		m.lootIdx = 0
+		m.lootActionIdx = 0
+		return
 	}
 	m.lootIdx = order[0]
 	m.lootActionIdx = 0
@@ -3573,8 +3600,8 @@ func (m *model) reload() {
 	} else {
 		m.exploitBruteLootCredIdx = 0
 	}
-	if len(osintTaxonomyPoints) > 0 {
-		m.osintTaxIdx = clamp(m.osintTaxIdx, 0, len(osintTaxonomyPoints)-1)
+	if points := liveOSINTTaxonomyPoints(commandsByMode(m.commands, "osint"), findingsByMode(m.findings, "osint"), lootByMode(m.loot, "osint")); len(points) > 0 {
+		m.osintTaxIdx = clamp(m.osintTaxIdx, 0, len(points)-1)
 	}
 	if m.archCollapsed == nil {
 		m.archCollapsed = map[string]bool{}
@@ -4581,11 +4608,44 @@ func (m model) lootView() string {
 }
 
 func (m model) selectedLootFogStage() lootFogStage {
-	if len(lootFogVisualOrder) == 0 {
-		return lootFogStage{Key: "recon", Title: "Frontal Surface Recon", Group: "Recon"}
+	stages := m.lootFogStagesLive()
+	if len(stages) == 0 {
+		return lootFogStage{}
 	}
-	key := lootFogVisualOrder[clamp(m.lootFogStageIdx, 0, len(lootFogVisualOrder)-1)]
-	return lootFogStageByKey(key)
+	return stages[clamp(m.lootFogStageIdx, 0, len(stages)-1)]
+}
+
+func (m model) lootFogStagesLive() []lootFogStage {
+	added := map[string]bool{}
+	out := []lootFogStage{}
+	add := func(key string) {
+		stage := lootFogStageByKey(key)
+		k := strings.ToLower(strings.TrimSpace(stage.Key))
+		if k == "" || added[k] {
+			return
+		}
+		added[k] = true
+		out = append(out, stage)
+	}
+	state := func(key string) string {
+		return strings.ToUpper(strings.TrimSpace(m.runState.NodeStates[key].State))
+	}
+	if state("surface") != "" || m.fogUnlockByKey("surface-map") || hasCommandMatch(commandsByMode(m.commands, "exploit"), "surface") {
+		add("surface")
+	}
+	if state("recon") != "" || hasCommandMatch(commandsByMode(m.commands, "exploit"), "recon") {
+		add("recon")
+	}
+	if state("breach") != "" || hasFindingMatch(findingsByMode(m.findings, "exploit"), "vuln") || hasCommandMatch(commandsByMode(m.commands, "exploit"), "exploit") {
+		add("breach")
+	}
+	if state("auth") != "" || m.fogUnlockByKey("auth-pivot") || hasLootMatch(lootByMode(m.loot, "exploit"), "credential") || hasLootMatch(lootByMode(m.loot, "exploit"), "token") {
+		add("access")
+	}
+	if state("impact") != "" || m.fogUnlockByKey("objective-control") || hasLootMatch(lootByMode(m.loot, "exploit"), "flag") {
+		add("objective")
+	}
+	return out
 }
 
 func lootFogStageByKey(key string) lootFogStage {
@@ -4594,10 +4654,13 @@ func lootFogStageByKey(key string) lootFogStage {
 			return item
 		}
 	}
-	return lootFogStage{Key: "recon", Title: "Frontal Surface Recon", Group: "Recon"}
+	return lootFogStage{}
 }
 
 func stageStateTag(stage lootFogStage, snap chainSnapshot) string {
+	if strings.TrimSpace(stage.Key) == "" {
+		return "FOG"
+	}
 	if ok, _ := requirementsReady(stage.Requires, snap); !ok {
 		return "FOG"
 	}
@@ -4625,41 +4688,25 @@ func colorStageLabel(label, state string, selected bool) string {
 }
 
 func renderLootFogSkull(snap chainSnapshot, selected string) string {
-	frontalStage := lootFogStageByKey("recon")
-	orbitalStage := lootFogStageByKey("surface")
-	maxillaryStage := lootFogStageByKey("breach")
-	infraStage := lootFogStageByKey("access")
-	mandibleStage := lootFogStageByKey("objective")
-	orbit := colorStageLabel("Orbital", stageStateTag(orbitalStage, snap), strings.EqualFold(selected, "surface"))
-	frontal := colorStageLabel("Frontal", stageStateTag(frontalStage, snap), strings.EqualFold(selected, "recon"))
-	maxillary := colorStageLabel("Maxillary", stageStateTag(maxillaryStage, snap), strings.EqualFold(selected, "breach"))
-	infra := colorStageLabel("Infraorbital", stageStateTag(infraStage, snap), strings.EqualFold(selected, "access"))
-	mandible := colorStageLabel("Mandibular", stageStateTag(mandibleStage, snap), strings.EqualFold(selected, "objective"))
-	return strings.Join([]string{
-		"              ___           _,.---,---.,_",
-		"              |         ,;~'             '~;,",
-		"              |       ,;                     ;,",
-		"     " + frontal + "  |      ;                         ; ,--- " + orbit,
-		"              |     ,'                         /'",
-		"              |    ,;                        /' ;,",
-		"              |    ; ;      .           . <-'  ; |",
-		"              |__  | ;   ______       ______   ;",
-		"             ___   |  '/~\"     ~\" . \"~     \"~\\'  |",
-		"             |     |  ~  ,-~~~^~, | ,~^~~~-,  ~  |",
-		"    " + maxillary + "  |      |   |        }:{        |",
-		"             |      |   l       / | \\       !   |",
-		"             |      .~  (__,.--\" .^. \"--.,__)  ~.",
-		"             |      |    ----;' / | \\ `;-<--------- " + infra,
-		"             |__     \\__.       \\/^\\/       .__/",
-		"                ___   V| \\                 / |V",
-		"                |      | |T~\\___!___!___/~T| |",
-		"                |      | |`IIII_I_I_I_IIII'| |",
-		"                |      |  \\,III I I I III,/  |",
-		"    " + mandible + " |       \\   `~~~~~~~~~~'    /",
-		"                |         \\   .       .",
-		"                |__         \\.    ^    ./",
-		"                              ^~~~^~~~^",
-	}, "\n")
+	stages := []lootFogStage{
+		lootFogStageByKey("surface"),
+		lootFogStageByKey("recon"),
+		lootFogStageByKey("breach"),
+		lootFogStageByKey("access"),
+		lootFogStageByKey("objective"),
+	}
+	lines := []string{"live fog telemetry"}
+	for _, stage := range stages {
+		if strings.TrimSpace(stage.Key) == "" {
+			continue
+		}
+		prefix := "  "
+		if strings.EqualFold(stage.Key, selected) {
+			prefix = "▸ "
+		}
+		lines = append(lines, fmt.Sprintf("%s%s [%s]", prefix, strings.ToUpper(stage.Key), stageStateTag(stage, snap)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 type fogStageActionItem struct {
@@ -4704,12 +4751,12 @@ func (m model) fogGroupUnlocked(group string) (bool, string) {
 	case "recon", "surface":
 		return true, ""
 	case "web-adv":
-		if m.fogUnlockByKey("surface-map") || nodeState("surface") != "OPEN" {
+		if m.fogUnlockByKey("surface-map") || nodeState("surface") == "VERIFIED" || nodeState("surface") == "PWNED" {
 			return true, ""
 		}
 		return false, "needs surface discovery unlock"
 	case "exploit":
-		if m.fogUnlockByKey("foothold") || nodeState("auth") == "PARTIAL" || nodeState("auth") == "VERIFIED" || nodeState("auth") == "PWNED" {
+		if m.fogUnlockByKey("foothold") || nodeState("auth") == "VERIFIED" || nodeState("auth") == "PWNED" {
 			return true, ""
 		}
 		return false, "needs foothold unlock"
@@ -4890,6 +4937,14 @@ func (m model) lootFogView() string {
 	leftWidth := max(66, m.width/2)
 	rightWidth := m.width - leftWidth - 2
 	snap := deriveChainSnapshot(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"))
+	stages := m.lootFogStagesLive()
+	if len(stages) == 0 {
+		return lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			pane("[LOOT] FOG-OF-WAR MISSION MAP", "no telemetry-backed fog stages available", leftWidth, m.height-6),
+			pane("[ARCH] FOG MISSION DETAIL", "Run exploit actions to emit node states/unlocks; fog stages will appear from live telemetry.", rightWidth, m.height-6),
+		)
+	}
 	stage := m.selectedLootFogStage()
 	items := m.lootFogStageMappedActions()
 	left := pane("[LOOT] FOG-OF-WAR MISSION MAP", renderLootFogSkull(snap, stage.Key), leftWidth, m.height-6)
@@ -4901,11 +4956,10 @@ func (m model) lootFogView() string {
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("stage order"),
 	}
-	for i, key := range lootFogVisualOrder {
-		item := lootFogStageByKey(key)
+	for i, item := range stages {
 		prefix := "  "
 		style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-		if i == clamp(m.lootFogStageIdx, 0, len(lootFogVisualOrder)-1) {
+		if i == clamp(m.lootFogStageIdx, 0, len(stages)-1) {
 			prefix = "▸ "
 			style = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
 		}
@@ -4974,15 +5028,16 @@ func (m model) lootFogView() string {
 func (m model) taxonomyView() string {
 	leftWidth := max(66, m.width/2)
 	rightWidth := m.width - leftWidth - 2
-	if len(osintTaxonomyPoints) == 0 {
-		return pane("[OSINT] PIPELINE TAXONOMY", "no osint taxonomy points configured", m.width-2, m.height-6)
+	points := liveOSINTTaxonomyPoints(commandsByMode(m.commands, "osint"), findingsByMode(m.findings, "osint"), lootByMode(m.loot, "osint"))
+	if len(points) == 0 {
+		return pane("[OSINT] PIPELINE TAXONOMY", "no live osint taxonomy points yet", m.width-2, m.height-6)
 	}
-	point := osintTaxonomyPoints[clamp(m.osintTaxIdx, 0, len(osintTaxonomyPoints)-1)]
+	point := points[clamp(m.osintTaxIdx, 0, len(points)-1)]
 	osintLoot := lootSubsetByMode(m.loot, true, false)
 	entities := osintTaxonomyEntities(point, m.commands, m.findings, osintLoot)
 	dataLoc := osintDataLocations(m.root, 14)
 
-	left := pane("[OSINT] PIPELINE TAXONOMY", renderOSINTTaxonomyMap(point.Key), leftWidth, m.height-6)
+	left := pane("[OSINT] PIPELINE TAXONOMY", renderOSINTTaxonomyMap(points, point.Key), leftWidth, m.height-6)
 
 	lines := []string{
 		metricLine("node", badgePill(strings.ToUpper(point.Marker), "99", "230")),
@@ -5349,6 +5404,8 @@ func operationStateSummary(mode string, commands []commandEntry, findings []find
 		metricLine("latest phase", latestPhase),
 	}
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "local":
+		lines = append(lines, metricLine("local artifacts", fmt.Sprintf("%d", countLocalArtifacts(loot))))
 	case "exploit":
 		s := deriveChainSnapshot(commands, findings, loot)
 		lines = append(lines, "chain :: "+
@@ -5362,8 +5419,8 @@ func operationStateSummary(mode string, commands []commandEntry, findings []find
 			))
 	case "osint":
 		entitiesMapped := 0
-		if len(osintTaxonomyPoints) > 0 {
-			entitiesMapped = len(osintTaxonomyEntities(osintTaxonomyPoints[0], commands, findings, loot))
+		if points := liveOSINTTaxonomyPoints(commands, findings, loot); len(points) > 0 {
+			entitiesMapped = len(osintTaxonomyEntities(points[0], commands, findings, loot))
 		}
 		lines = append(lines, metricLine("entities mapped", fmt.Sprintf("%d", entitiesMapped)))
 	case "onchain":
@@ -5807,6 +5864,17 @@ func (m model) controlModeContextLines(mode, selectedTask string, onchainProfile
 	customMode := strings.ToUpper(m.activeCustomRuntime())
 	customCommand := truncate(valueOr(m.activeCustomCommand(mode), "unset"), 54)
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "local":
+		target := strings.TrimSpace(m.manualTargetInput)
+		if target == "" {
+			target = m.root
+		}
+		return []string{
+			metricLine("local target", truncate(target, 54)),
+			metricLine("lane", "privesc,binary,code,internal"),
+			metricLine("custom rt", customMode),
+			metricLine("custom cmd", customCommand),
+		}
 	case "osint":
 		return []string{
 			metricLine("seed input", valueOr(m.osintTargetInput, "example.com")),
@@ -5848,13 +5916,13 @@ func (m model) footerView() string {
 func (m model) panelHintLine() string {
 	switch m.tab {
 	case 0:
-		return "ARCH loop :: read mission HUD -> inspect map node -> run mapped action -> verify objective delta"
+		return "ARCH loop :: m toggles live map :: inspect map node -> run mapped action -> verify objective delta"
 	case 1:
 		return "OPS loop :: scroll timeline -> replay critical event (x) -> validate output confidence -> pivot"
 	case 2:
 		return "PWNED loop :: select finding -> run follow-up -> confirm exploitability -> escalate lane"
 	case 3:
-		return "LOOT loop :: select artifact -> mapped action (,/.) -> fire Enter/f -> verify new access path"
+		return "LOOT loop :: select artifact -> mapped action (,/.) -> fire Enter/f :: t/o toggles fog taxonomy view"
 	case 4:
 		return "CTRL loop :: select lane -> aim preview -> fire execute -> inspect after-action card"
 	default:
@@ -6611,14 +6679,10 @@ func endpointMap(findings []findingEntry, loot []lootEntry, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderOSINTTaxonomyMap(selectedKey string) string {
-	art := strings.TrimPrefix(osintNavigatorASCII, "\n")
-	for _, point := range osintTaxonomyPoints {
-		styled := plainLabelWithState(point.Marker, "", strings.EqualFold(point.Key, selectedKey))
-		art = strings.Replace(art, point.Token, styled, 1)
-	}
-	menu := make([]string, 0, len(osintTaxonomyPoints))
-	for i, point := range osintTaxonomyPoints {
+func renderOSINTTaxonomyMap(points []osintTaxonomyPoint, selectedKey string) string {
+	_ = osintNavigatorASCII
+	menu := make([]string, 0, len(points))
+	for i, point := range points {
 		prefix := "  "
 		style := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 		if strings.EqualFold(point.Key, selectedKey) {
@@ -6627,7 +6691,75 @@ func renderOSINTTaxonomyMap(selectedKey string) string {
 		}
 		menu = append(menu, style.Render(fmt.Sprintf("%s%02d %s :: %s", prefix, i+1, strings.ToUpper(point.Marker), point.Phase)))
 	}
-	return strings.Join(menu, "\n") + "\n\n" + art
+	return strings.Join(menu, "\n")
+}
+
+func liveOSINTTaxonomyPoints(commands []commandEntry, findings []findingEntry, loot []lootEntry) []osintTaxonomyPoint {
+	type bucketSpec struct {
+		Key    string
+		Marker string
+		Phase  string
+		Desc   string
+	}
+	specByBucket := map[string]bucketSpec{
+		"seed":      {Key: "seed", Marker: "SEED INPUT", Phase: "INPUT", Desc: "Seed collection signals from live telemetry."},
+		"deep":      {Key: "deep", Marker: "DEEP ENUM", Phase: "DISCOVERY", Desc: "Deep enumeration signals from live telemetry."},
+		"recon-ng":  {Key: "recon-ng", Marker: "RECON-NG", Phase: "COLLECTION", Desc: "Recon-ng collector telemetry."},
+		"rengine":   {Key: "rengine", Marker: "RENGINE", Phase: "COLLECTION", Desc: "ReNgine runtime checks and outputs."},
+		"artifact":  {Key: "artifact", Marker: "ARTIFACTS", Phase: "PROCESSING", Desc: "Captured artifact stream from OSINT runs."},
+		"finding":   {Key: "finding", Marker: "VALIDATION", Phase: "VALIDATION", Desc: "OSINT findings requiring corroboration."},
+		"reporting": {Key: "reporting", Marker: "REPORT", Phase: "REPORTING", Desc: "Reporting and handoff signals from telemetry."},
+	}
+	counts := map[string]int{}
+	for _, item := range loot {
+		if !isOSINTLoot(item) {
+			continue
+		}
+		counts[osintLootToolBucket(item)]++
+	}
+	for _, cmd := range commands {
+		meta := strings.ToLower(strings.TrimSpace(cmd.Tool + " " + cmd.Command + " " + cmd.Phase))
+		switch {
+		case strings.Contains(meta, "theharvester"), strings.Contains(meta, "seed"):
+			counts["seed"]++
+		case strings.Contains(meta, "spiderfoot"), strings.Contains(meta, "bbot"), strings.Contains(meta, "deep"):
+			counts["deep"]++
+		case strings.Contains(meta, "recon-ng"):
+			counts["recon-ng"]++
+		case strings.Contains(meta, "rengine"):
+			counts["rengine"]++
+		case strings.Contains(meta, "report"), strings.Contains(meta, "brief"):
+			counts["reporting"]++
+		}
+	}
+	for _, finding := range findings {
+		if strings.EqualFold(strings.TrimSpace(finding.Phase), "osint") {
+			counts["finding"]++
+		}
+	}
+	points := []osintTaxonomyPoint{}
+	for _, bucket := range osintLootToolOrder() {
+		if counts[bucket] == 0 {
+			continue
+		}
+		if spec, ok := specByBucket[bucket]; ok {
+			points = append(points, osintTaxonomyPoint{
+				Key:         spec.Key,
+				Marker:      spec.Marker,
+				Phase:       spec.Phase,
+				Description: spec.Desc + " count=" + fmt.Sprintf("%d", counts[bucket]),
+			})
+		}
+	}
+	if counts["finding"] > 0 {
+		spec := specByBucket["finding"]
+		points = append(points, osintTaxonomyPoint{Key: spec.Key, Marker: spec.Marker, Phase: spec.Phase, Description: spec.Desc + " count=" + fmt.Sprintf("%d", counts["finding"])})
+	}
+	if counts["reporting"] > 0 {
+		spec := specByBucket["reporting"]
+		points = append(points, osintTaxonomyPoint{Key: spec.Key, Marker: spec.Marker, Phase: spec.Phase, Description: spec.Desc + " count=" + fmt.Sprintf("%d", counts["reporting"])})
+	}
+	return points
 }
 
 func osintDataLocations(root string, limit int) []string {
@@ -9043,6 +9175,12 @@ func commandMode(entry commandEntry) string {
 	if meta == "" {
 		return "exploit"
 	}
+	localMarkers := []string{" local-", "linpeas", "linux-exploit-suggester", "pspy", "checksec", "rabin2", "semgrep", "gitleaks", "trivy fs", "grype", "local-artifact"}
+	for _, marker := range localMarkers {
+		if strings.Contains(meta, marker) {
+			return "local"
+		}
+	}
 	onchainMarkers := []string{"onchain", "slither", "mythril", "forge", "cast", "anvil", "echidna", "medusa", "halmos", "rpc-check", "address-flow"}
 	for _, marker := range onchainMarkers {
 		if strings.Contains(meta, marker) {
@@ -9119,7 +9257,7 @@ func findingsByMode(findings []findingEntry, mode string) []findingEntry {
 	if mode == "" || mode == "exploit" {
 		out := make([]findingEntry, 0, len(findings))
 		for _, entry := range findings {
-			if !isOSINTFinding(entry) && !isOnchainFinding(entry) && !isCoopFinding(entry) {
+			if !isOSINTFinding(entry) && !isOnchainFinding(entry) && !isCoopFinding(entry) && !isLocalFinding(entry) {
 				out = append(out, entry)
 			}
 		}
@@ -9134,6 +9272,9 @@ func findingsByMode(findings []findingEntry, mode string) []findingEntry {
 			out = append(out, entry)
 		}
 		if mode == "coop" && isCoopFinding(entry) {
+			out = append(out, entry)
+		}
+		if mode == "local" && isLocalFinding(entry) {
 			out = append(out, entry)
 		}
 	}
@@ -9157,8 +9298,12 @@ func findingDisplayOrderByMode(findings []findingEntry, mode string) []int {
 			if isCoopFinding(entry) {
 				order = append(order, idx)
 			}
+		case "local":
+			if isLocalFinding(entry) {
+				order = append(order, idx)
+			}
 		default:
-			if !isOSINTFinding(entry) && !isOnchainFinding(entry) && !isCoopFinding(entry) {
+			if !isOSINTFinding(entry) && !isOnchainFinding(entry) && !isCoopFinding(entry) && !isLocalFinding(entry) {
 				order = append(order, idx)
 			}
 		}
@@ -9183,8 +9328,12 @@ func lootByMode(loot []lootEntry, mode string) []lootEntry {
 			if isCoopLoot(entry) {
 				out = append(out, entry)
 			}
+		case "local":
+			if isLocalLoot(entry) {
+				out = append(out, entry)
+			}
 		default:
-			if !isOSINTLoot(entry) && !isOnchainLoot(entry) && !isCoopLoot(entry) {
+			if !isOSINTLoot(entry) && !isOnchainLoot(entry) && !isCoopLoot(entry) && !isLocalLoot(entry) {
 				out = append(out, entry)
 			}
 		}
@@ -9225,8 +9374,21 @@ func isCoopFinding(entry findingEntry) bool {
 	return false
 }
 
+func isLocalFinding(entry findingEntry) bool {
+	meta := strings.ToLower(entry.Title + " " + entry.Endpoint + " " + entry.Impact + " " + entry.Evidence)
+	markers := []string{"local", "package", "dependency", "semgrep", "gitleaks", "linpeas", "lse", "pspy", "kernel", "suid", "binary"}
+	for _, marker := range markers {
+		if strings.Contains(meta, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func modeDigest(mode string, findings []findingEntry, loot []lootEntry, width int) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "local":
+		return "LOCAL FILE/PACKAGE RED TEAM OPERATOR"
 	case "osint":
 		lines := []string{
 			metricLine("osint findings", fmt.Sprintf("%d", len(findings))),
@@ -9275,6 +9437,17 @@ func modeDigest(mode string, findings []findingEntry, loot []lootEntry, width in
 
 func modeTargetGraph(mode string, state stateFile, findings []findingEntry, loot []lootEntry, width int) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "local":
+		target := strings.TrimSpace(state.TargetURL)
+		if strings.TrimSpace(target) == "" {
+			target = "."
+		}
+		steps := []string{
+			"1) local-stack-check",
+			"2) local-privesc + local-binary-triage " + target,
+			"3) local-package-audit " + target + " + local-internal-recon",
+		}
+		return wrap(strings.Join(steps, " | "), width)
 	case "osint":
 		seed := strings.TrimSpace(targetHostFromURL(state.TargetURL))
 		if seed == "" {
@@ -10614,6 +10787,13 @@ func (m model) renderOnchainGraphNodeDetail(node attackGraphNode, edges []attack
 
 func modeChainBoard(mode string, commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "local":
+		lines := []string{
+			"if target missing -> set local path in CTRL/TARGET input",
+			"if privesc missing -> run local-privesc",
+			"if code/pkg missing -> run local-package-audit",
+		}
+		return wrap(strings.Join(lines, " | "), width)
 	case "osint":
 		seed := hasCommandMatch(commands, "seed-harvest")
 		deep := hasCommandMatch(commands, "bbot") || hasCommandMatch(commands, "spiderfoot")
@@ -10653,6 +10833,18 @@ func modeChainBoard(mode string, commands []commandEntry, findings []findingEntr
 
 func modeWorkflowBoard(mode string, commands []commandEntry, findings []findingEntry, loot []lootEntry, width int) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "local":
+		privesc := hasCommandMatch(commands, "local-privesc")
+		binary := hasCommandMatch(commands, "local-binary-triage")
+		code := hasCommandMatch(commands, "local-package-audit")
+		internal := hasCommandMatch(commands, "local-internal-recon")
+		lines := []string{
+			fmt.Sprintf("%s PRIVESC", statusBadge(ternary(privesc, "done", "idle"))),
+			fmt.Sprintf("%s BINARY", statusBadge(ternary(binary, "done", "idle"))),
+			fmt.Sprintf("%s CODE/PKG", statusBadge(ternary(code, "done", "idle"))),
+			fmt.Sprintf("%s INTERNAL", statusBadge(ternary(internal, "done", "idle"))),
+		}
+		return wrap(strings.Join(lines, " | "), width)
 	case "osint":
 		seed := hasCommandMatch(commands, "osint-seed-harvest")
 		discovery := hasCommandMatch(commands, "osint-deep-bbot") || hasCommandMatch(commands, "osint-deep-spiderfoot")
@@ -10813,6 +11005,16 @@ func countOnchainFlowArtifacts(loot []lootEntry) int {
 	for _, item := range loot {
 		meta := strings.ToLower(item.Name + " " + item.Source + " " + item.Preview)
 		if strings.Contains(meta, "address-flow") || strings.Contains(meta, "4d") {
+			count++
+		}
+	}
+	return count
+}
+
+func countLocalArtifacts(loot []lootEntry) int {
+	count := 0
+	for _, item := range loot {
+		if isLocalLoot(item) {
 			count++
 		}
 	}
@@ -11923,6 +12125,23 @@ func isCoopLoot(item lootEntry) bool {
 	return false
 }
 
+func isLocalLoot(item lootEntry) bool {
+	meta := strings.ToLower(item.Kind + " " + item.Name + " " + item.Source + " " + item.Preview)
+	if strings.Contains(meta, "artifacts/local/") || strings.Contains(meta, "/artifacts/local/") {
+		return true
+	}
+	markers := []string{
+		"local-artifact", "linpeas", "linux-exploit-suggester", "pspy", "lse", "checksec", "rabin2",
+		"semgrep", "gitleaks", "trivy", "grype", "package audit", "dependency", "suid", "kernel",
+	}
+	for _, marker := range markers {
+		if strings.Contains(meta, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func osintLootToolBucket(item lootEntry) string {
 	meta := strings.ToLower(item.Name + " " + item.Source + " " + item.Preview)
 	switch {
@@ -12002,11 +12221,43 @@ func exploitLootDisplayOrder(loot []lootEntry) []int {
 		comp := lootCompartment(item.Kind)
 		grouped[comp] = append(grouped[comp], i)
 	}
+	for comp := range grouped {
+		sort.SliceStable(grouped[comp], func(a, b int) bool {
+			i := grouped[comp][a]
+			j := grouped[comp][b]
+			ri := lootSeverityRank(lootRisk(loot[i]).Severity)
+			rj := lootSeverityRank(lootRisk(loot[j]).Severity)
+			if ri != rj {
+				return ri > rj
+			}
+			ti := parseTimestamp(loot[i].Timestamp)
+			tj := parseTimestamp(loot[j].Timestamp)
+			if !ti.Equal(tj) {
+				return ti.After(tj)
+			}
+			return i < j
+		})
+	}
 	out := make([]int, 0, len(loot))
 	for _, comp := range lootCompartmentOrder() {
 		out = append(out, grouped[comp]...)
 	}
 	return out
+}
+
+func lootSeverityRank(severity string) int {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func osintLootDisplayOrder(loot []lootEntry) []int {
@@ -14104,58 +14355,74 @@ func pipelineByName(name string) pipelineSpec {
 }
 
 func loadAttackModules(root string) []attackModule {
-	base := filepath.Join(root, "modules", "exploit")
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return nil
+	roots := []string{
+		filepath.Join(root, "modules", "exploit"),
+		filepath.Join(root, "modules", "local"),
 	}
-	out := make([]attackModule, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := strings.ToLower(strings.TrimSpace(entry.Name()))
-		if !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(base, entry.Name()))
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		roots = append(roots, filepath.Join(home, ".config", "h3retik", "modules"))
+	}
+	if extra := strings.TrimSpace(os.Getenv("H3RETIK_MODULES_DIR")); extra != "" {
+		roots = append(roots, extra)
+	}
+	out := make([]attackModule, 0, 64)
+	seen := map[string]bool{}
+	for _, base := range roots {
+		entries, err := os.ReadDir(base)
 		if err != nil {
 			continue
 		}
-		var item attackModule
-		if err := json.Unmarshal(raw, &item); err != nil {
-			continue
-		}
-		item.ID = strings.TrimSpace(item.ID)
-		item.Mode = strings.ToLower(strings.TrimSpace(item.Mode))
-		item.Group = strings.TrimSpace(item.Group)
-		item.Runtime = strings.ToLower(strings.TrimSpace(item.Runtime))
-		item.Label = strings.TrimSpace(item.Label)
-		item.Description = strings.TrimSpace(item.Description)
-		item.CommandTemplate = strings.TrimSpace(item.CommandTemplate)
-		if item.ID == "" || item.Label == "" || item.CommandTemplate == "" {
-			continue
-		}
-		if item.Mode == "" {
-			item.Mode = "exploit"
-		}
-		if item.Runtime == "" {
-			item.Runtime = "kali"
-		}
-		if item.Group == "" {
-			item.Group = "Modules"
-		}
-		for idx := range item.Inputs {
-			item.Inputs[idx].Key = strings.TrimSpace(strings.ToLower(item.Inputs[idx].Key))
-			item.Inputs[idx].Label = strings.TrimSpace(item.Inputs[idx].Label)
-			item.Inputs[idx].DefaultValue = strings.TrimSpace(item.Inputs[idx].DefaultValue)
-			item.Inputs[idx].InputType = strings.TrimSpace(strings.ToLower(item.Inputs[idx].InputType))
-			for i := range item.Inputs[idx].Options {
-				item.Inputs[idx].Options[i] = strings.TrimSpace(item.Inputs[idx].Options[i])
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
 			}
-		}
-		if item.Enabled {
-			out = append(out, item)
+			name := strings.ToLower(strings.TrimSpace(entry.Name()))
+			if !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			raw, err := os.ReadFile(filepath.Join(base, entry.Name()))
+			if err != nil {
+				continue
+			}
+			var item attackModule
+			if err := json.Unmarshal(raw, &item); err != nil {
+				continue
+			}
+			item.ID = strings.TrimSpace(item.ID)
+			item.Mode = strings.ToLower(strings.TrimSpace(item.Mode))
+			item.Group = strings.TrimSpace(item.Group)
+			item.Runtime = strings.ToLower(strings.TrimSpace(item.Runtime))
+			item.Label = strings.TrimSpace(item.Label)
+			item.Description = strings.TrimSpace(item.Description)
+			item.CommandTemplate = strings.TrimSpace(item.CommandTemplate)
+			if item.ID == "" || item.Label == "" || item.CommandTemplate == "" {
+				continue
+			}
+			if seen[strings.ToLower(item.ID)] {
+				continue
+			}
+			if item.Mode == "" {
+				item.Mode = "exploit"
+			}
+			if item.Runtime == "" {
+				item.Runtime = "kali"
+			}
+			if item.Group == "" {
+				item.Group = "Modules"
+			}
+			for idx := range item.Inputs {
+				item.Inputs[idx].Key = strings.TrimSpace(strings.ToLower(item.Inputs[idx].Key))
+				item.Inputs[idx].Label = strings.TrimSpace(item.Inputs[idx].Label)
+				item.Inputs[idx].DefaultValue = strings.TrimSpace(item.Inputs[idx].DefaultValue)
+				item.Inputs[idx].InputType = strings.TrimSpace(strings.ToLower(item.Inputs[idx].InputType))
+				for i := range item.Inputs[idx].Options {
+					item.Inputs[idx].Options[i] = strings.TrimSpace(item.Inputs[idx].Options[i])
+				}
+			}
+			if item.Enabled {
+				out = append(out, item)
+				seen[strings.ToLower(item.ID)] = true
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -14421,6 +14688,15 @@ func renderPipelineLegend(selected string, width int) string {
 }
 
 func renderFireModeGuide(mode, exploitPipeline, deepEngine string, width int) string {
+	if strings.EqualFold(mode, "local") {
+		lines := []string{
+			metricLine("mode", "LOCAL"),
+			metricLine("chain", "stack-check -> privesc -> binary -> code/pkg -> internal"),
+			metricLine("target", "set local path in CTRL TARGET manual input"),
+			wrap("Use FIRE mode LOCAL for local files, packages, binaries, and internal recon workflows.", max(24, width)),
+		}
+		return strings.Join(lines, "\n")
+	}
 	if strings.EqualFold(mode, "coop") {
 		backend := strings.ToUpper(strings.TrimSpace(os.Getenv("H3RETIK_COOP_BACKEND")))
 		if backend == "" {
@@ -14460,6 +14736,15 @@ func renderFireModeGuide(mode, exploitPipeline, deepEngine string, width int) st
 }
 
 func renderFireModeLegend(mode, exploitPipeline, deepEngine string, width int) string {
+	if strings.EqualFold(mode, "local") {
+		lines := []string{
+			lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Render("local lane quick legend"),
+			"  wrappers: local-stack-check/local-privesc/local-binary-triage/local-package-audit/local-internal-recon",
+			"  modules: repo modules/local + ~/.config/h3retik/modules + H3RETIK_MODULES_DIR",
+			"  telemetry: commands/findings/loot tagged under LOCAL scope",
+		}
+		return wrap(strings.Join(lines, "\n"), max(24, width))
+	}
 	if strings.EqualFold(mode, "coop") {
 		lines := []string{
 			"▸ [COOP] Guided Quickstart + backend profile",
@@ -14961,16 +15246,26 @@ func (m model) targetActions() []controlAction {
 }
 
 func (m model) fireActions() []controlAction {
+	modeActions := []controlAction{
+		{Label: "[MODE] EXPLOIT", Description: "Switch FIRE lane to exploit/web operations.", Mode: "internal", Command: "fire-mode:exploit"},
+		{Label: "[MODE] LOCAL", Description: "Switch FIRE lane to local file/package/binary redteaming.", Mode: "internal", Command: "fire-mode:local"},
+		{Label: "[MODE] OSINT", Description: "Switch FIRE lane to OSINT workflows.", Mode: "internal", Command: "fire-mode:osint"},
+		{Label: "[MODE] ONCHAIN", Description: "Switch FIRE lane to onchain workflows.", Mode: "internal", Command: "fire-mode:onchain"},
+		{Label: "[MODE] CO-OP", Description: "Switch FIRE lane to co-op/C2 workflows.", Mode: "internal", Command: "fire-mode:coop"},
+	}
 	if strings.EqualFold(m.fireMode, "coop") {
-		return m.coopFireActions()
+		return append(modeActions, m.coopFireActions()...)
 	}
 	if strings.EqualFold(m.fireMode, "onchain") {
-		return m.onchainFireActions()
+		return append(modeActions, m.onchainFireActions()...)
 	}
 	if strings.EqualFold(m.fireMode, "osint") {
-		return m.osintFireActions()
+		return append(modeActions, m.osintFireActions()...)
 	}
-	return m.exploitFireActions()
+	if strings.EqualFold(m.fireMode, "local") {
+		return append(modeActions, m.localFireActions()...)
+	}
+	return append(modeActions, m.exploitFireActions()...)
 }
 
 func (m model) coopFireActions() []controlAction {
@@ -16088,6 +16383,85 @@ func (m model) onchainFireActions() []controlAction {
 	return append(m.customFireActions("onchain"), actions...)
 }
 
+func (m model) localFireActions() []controlAction {
+	target := strings.TrimSpace(m.manualTargetInput)
+	if target == "" {
+		target = strings.TrimSpace(m.root)
+	}
+	targetQ := shellQuote(target)
+	actions := []controlAction{
+		{
+			Label:       "[LOCAL] Stack Check",
+			Description: "Verify local-redteam wrappers and tools in Kali runtime.",
+			Mode:        "kali",
+			Command:     kaliExecCommand("local-stack-check"),
+			KaliShell:   "local-stack-check",
+		},
+		{
+			Label:       "[LOCAL] Set Target Path",
+			Description: "Set local target path/package/repo in manual input before scans.",
+			Mode:        "internal",
+			Command:     "target:manual-url",
+		},
+		{
+			Label:       "[LOCAL] PrivEsc (linpeas+lse+pspy+kern-suggest)",
+			Description: "Run local host privilege escalation recon against target context.",
+			Mode:        "kali",
+			Command:     kaliExecCommand("local-privesc " + targetQ),
+			KaliShell:   "local-privesc " + targetQ,
+			Group:       "Privilege",
+		},
+		{
+			Label:       "[LOCAL] Binary Triage (checksec+rabin2+strings)",
+			Description: "Run binary hardening and quick-reversing metadata collection.",
+			Mode:        "kali",
+			Command:     kaliExecCommand("local-binary-triage " + targetQ),
+			KaliShell:   "local-binary-triage " + targetQ,
+			Group:       "Binary",
+		},
+		{
+			Label:       "[LOCAL] Package/App Audit (semgrep+trivy+grype+gitleaks)",
+			Description: "Run code/package vulnerability and secrets audit on local project path.",
+			Mode:        "kali",
+			Command:     kaliExecCommand("local-package-audit " + targetQ),
+			KaliShell:   "local-package-audit " + targetQ,
+			Group:       "Code",
+		},
+		{
+			Label:       "[LOCAL] Internal Recon (smb/ldap/rpc baseline)",
+			Description: "Run internal network recon around local environment scope.",
+			Mode:        "kali",
+			Command:     kaliExecCommand("local-internal-recon"),
+			KaliShell:   "local-internal-recon",
+			Group:       "Recon",
+		},
+		{
+			Label:       "[LOCAL] Artifact Index",
+			Description: "List local-lane artifacts.",
+			Mode:        "kali",
+			Command:     kaliExecCommand("find /artifacts/local -maxdepth 3 -type f 2>/dev/null | sort"),
+			KaliShell:   "find /artifacts/local -maxdepth 3 -type f 2>/dev/null | sort",
+			Group:       "Utility",
+		},
+	}
+	for _, mod := range m.attackModules {
+		if !strings.EqualFold(strings.TrimSpace(mod.Mode), "local") {
+			continue
+		}
+		if len(mod.Inputs) > 0 {
+			actions = append(actions, controlAction{
+				Label:       "[MODULE] Configure :: " + mod.Label,
+				Description: fmt.Sprintf("Configure %d input fields for this module.", len(mod.Inputs)),
+				Mode:        "internal",
+				Command:     "module:configure:" + mod.ID,
+				ModuleID:    mod.ID,
+			})
+		}
+		actions = append(actions, m.moduleToAction(mod))
+	}
+	return append(m.customFireActions("local"), actions...)
+}
+
 func (m model) historyActions() []controlAction {
 	actions := []controlAction{
 		{
@@ -16177,6 +16551,16 @@ func (m *model) applyInternalAction(action controlAction) {
 		}
 		m.manualTargetInput = defaultValue
 		m.controlStatus = fmt.Sprintf("module input %d/%d :: %s", 1, len(keys), moduleInputDisplayLabel(firstInput))
+		return
+	}
+	if action.Command == "fire-mode:local" {
+		m.fireMode = "local"
+		m.exploitPipelineMenu = false
+		m.controlSection = 2
+		m.fireIdx = 0
+		m.ensureCommandSelection()
+		m.ensureFindingSelection()
+		m.controlStatus = "ok :: FIRE mode switched to LOCAL"
 		return
 	}
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(action.Command)), "target:onchain:set:") {
@@ -17236,6 +17620,9 @@ func replayCmd(command string) tea.Cmd {
 }
 
 func inferActionTelemetryPhase(action controlAction, fallback string) string {
+	if isLocalAction(action) {
+		return "local"
+	}
 	if isOSINTAction(action) {
 		return "osint"
 	}
@@ -17709,6 +18096,13 @@ func controlCmd(root string, action controlAction, phase string) tea.Cmd {
 				finalOutput += "\n\n[onchain-loot] captured :: " + rel
 			}
 		}
+		if isLocalAction(action) {
+			if rel, persistErr := persistLocalResult(root, action, finalOutput); persistErr != nil {
+				finalOutput += "\n\n[local-loot] persist failed :: " + persistErr.Error()
+			} else if strings.TrimSpace(rel) != "" {
+				finalOutput += "\n\n[local-loot] captured :: " + rel
+			}
+		}
 		if isCoopAction(action) {
 			if rel, persistErr := persistCoopResult(root, action, finalOutput); persistErr != nil {
 				finalOutput += "\n\n[coop-loot] persist failed :: " + persistErr.Error()
@@ -17782,6 +18176,17 @@ func isOSINTAction(action controlAction) bool {
 		}
 	}
 	return false
+}
+
+func isLocalAction(action controlAction) bool {
+	meta := strings.ToLower(action.Label + " " + action.Command + " " + action.KaliShell + " " + action.Group)
+	markers := []string{"[local]", "local-", "linpeas", "lse", "pspy", "linux-exploit-suggester", "checksec", "rabin2", "semgrep", "gitleaks", "trivy fs", "grype"}
+	for _, marker := range markers {
+		if strings.Contains(meta, marker) {
+			return true
+		}
+	}
+	return strings.EqualFold(strings.TrimSpace(action.Mode), "local") && strings.Contains(meta, "package")
 }
 
 func isOnchainAction(action controlAction) bool {
@@ -18036,6 +18441,77 @@ func persistOnchainResult(root string, action controlAction, output string) (str
 			Source:    rel,
 			Preview:   truncate(fmt.Sprintf("artifact=%s", rel), 240),
 		})
+	}
+	return relPath, nil
+}
+
+func localToolFromAction(action controlAction) string {
+	meta := strings.ToLower(action.Label + " " + action.Command + " " + action.KaliShell)
+	switch {
+	case strings.Contains(meta, "linpeas"):
+		return "linpeas"
+	case strings.Contains(meta, "linux-exploit-suggester"):
+		return "linux-exploit-suggester"
+	case strings.Contains(meta, "pspy"):
+		return "pspy"
+	case strings.Contains(meta, "lse"):
+		return "lse"
+	case strings.Contains(meta, "checksec"):
+		return "checksec"
+	case strings.Contains(meta, "rabin2"):
+		return "rabin2"
+	case strings.Contains(meta, "semgrep"):
+		return "semgrep"
+	case strings.Contains(meta, "gitleaks"):
+		return "gitleaks"
+	case strings.Contains(meta, "trivy"):
+		return "trivy"
+	case strings.Contains(meta, "grype"):
+		return "grype"
+	default:
+		return "local"
+	}
+}
+
+func persistLocalResult(root string, action controlAction, output string) (string, error) {
+	text := strings.TrimSpace(output)
+	if text == "" {
+		return "", nil
+	}
+	now := time.Now().UTC()
+	stamp := now.Format("20060102-150405")
+	tool := localToolFromAction(action)
+	slug := sanitizeToken(tool)
+	if slug == "" {
+		slug = "local"
+	}
+	dir := filepath.Join(root, "artifacts", "local", "loot")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	fileName := stamp + "-" + slug + ".txt"
+	fullPath := filepath.Join(dir, fileName)
+	payload := strings.Join([]string{
+		"# local action",
+		"label: " + action.Label,
+		"command: " + strings.TrimSpace(action.Command),
+		"time: " + now.Format(time.RFC3339),
+		"",
+		text,
+	}, "\n")
+	if err := os.WriteFile(fullPath, []byte(payload), 0o644); err != nil {
+		return "", err
+	}
+	relPath := filepath.ToSlash(filepath.Join("artifacts", "local", "loot", fileName))
+	entry := lootEntry{
+		Timestamp: now.Format(time.RFC3339),
+		Kind:      "local-artifact",
+		Name:      "LOCAL " + strings.ToUpper(tool) + " result",
+		Source:    relPath,
+		Preview:   truncate(firstNonEmptyLine(text), 240),
+	}
+	if err := appendLootJSONL(filepath.Join(root, "telemetry", "loot.jsonl"), entry); err != nil {
+		return "", err
 	}
 	return relPath, nil
 }

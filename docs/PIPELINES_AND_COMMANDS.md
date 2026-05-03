@@ -11,6 +11,7 @@ This document explains all operator command surfaces: `h3retik` CLI, TUI `CTRL` 
 - `h3retik build` / `h3retik build-kali` — build TUI / Kali image
 - `h3retik shell` — interactive shell in Kali container
 - `h3retik kali "<cmd>"` — execute one command in Kali
+- `h3retik local <stack-check|privesc|binary|package|internal> [path]` — local lane wrappers
 - `h3retik coop caldera <check|up|status|stop|api|report>` — CALDERA helpers
 - `h3retik coop wildmesh <check|setup|up|status|discover|policy|sync|automate|stop>` — WildMesh helpers
 - `h3retik target <args...>` — passthrough to `scripts/targetctl.py`
@@ -20,6 +21,11 @@ This document explains all operator command surfaces: `h3retik` CLI, TUI `CTRL` 
 - `h3retik reset` — reset telemetry/custom target
 - `h3retik doctor` — runtime checks
 - `h3retik install` — global launcher install
+
+Modular install strict mode:
+
+- `h3retik tools install <bundle|tool1,tool2,...> --strict`
+- exits non-zero if any requested tool is still missing
 
 ## 2) TUI CTRL Command Architecture
 
@@ -35,6 +41,13 @@ Execution runtimes:
 - `local` — executed on host
 - `kali` — executed in Kali container
 - `internal` — UI state changes (no shell command)
+
+Fast mode keys in CTRL:
+
+- `o` OSINT
+- `y` LOCAL
+- `c` ONCHAIN
+- `g` CO-OP
 
 ## 3) Exploit Pipelines (Catalog)
 
@@ -104,6 +117,24 @@ Wrappers called by FIRE actions:
 - `osint-rengine`
 - `osint-stack-check`
 
+## 5.5) Local Pipeline (TUI + Wrappers)
+
+Recommended local operator flow:
+
+1. stack check
+2. privilege escalation recon
+3. binary triage
+4. package/code audit
+5. internal recon
+
+Wrappers called by FIRE actions:
+
+- `local-stack-check`
+- `local-privesc`
+- `local-binary-triage`
+- `local-package-audit`
+- `local-internal-recon`
+
 ## 6) Onchain Pipeline (TUI + Wrappers)
 
 Onchain operator flow:
@@ -160,7 +191,7 @@ Stop path:
 
 ### Custom command lane
 
-In exploit/osint/onchain/coop FIRE you can run custom commands.
+In exploit/local/osint/onchain/coop FIRE you can run custom commands.
 
 Capabilities:
 

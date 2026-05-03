@@ -29,7 +29,7 @@ In TUI:
 - Tabs: `h/l` (or arrows)
 - Replay: `x`
 - Loot raw/parsing: `v`
-- Scope switch: `o` (OSINT), `c` (ONCHAIN), `g` (CO-OP)
+- Scope switch: `o` (OSINT), `y` (LOCAL), `c` (ONCHAIN), `g` (CO-OP)
 - Exploit map: `m`
 - Refresh: `r`
 
@@ -56,6 +56,11 @@ In TUI:
 
 - Up -> status -> agents -> operations -> report
 - Use inline `hint :: ...` as next-step guide
+
+### Local
+
+- Stack-check -> privesc -> binary triage -> package audit -> internal recon
+- Target path defaults to `/workspace` for headless wrappers
 
 ## 4) OPSEC Quick Policy
 
@@ -95,7 +100,6 @@ h3retik pipeline --target http://127.0.0.1:3000 --profile quick
 ## 8) If Something Feels Off
 
 - `r` to refresh telemetry
-- verify scope mode (`exploit/osint/onchain/coop`)
+- verify scope mode (`exploit/local/osint/onchain/coop`)
 - verify target in `CTRL -> TARGET`
 - verify runtime/container (`H3RETIK_KALI_CONTAINER`, `H3RETIK_SKIP_UP`)
-

@@ -126,6 +126,7 @@ RUN arch="$(dpkg --print-architecture)" \
     && rm -f /tmp/echidna.tar.gz /tmp/echidna
 
 RUN GOBIN=/usr/local/bin go install github.com/crytic/medusa@latest || true
+RUN GOBIN=/usr/local/bin go install github.com/zricethezav/gitleaks/v8@latest || true
 
 RUN git clone --depth=1 https://github.com/smicallef/spiderfoot.git /opt/spiderfoot \
     && python3 -m venv /opt/spiderfoot-venv \
@@ -137,9 +138,30 @@ RUN git clone --depth=1 https://github.com/yogeshojha/rengine.git /opt/rengine \
     && python3 -m venv /opt/rengine-venv \
     && /opt/rengine-venv/bin/pip install --upgrade pip
 
+RUN pipx install --include-deps semgrep \
+    && ln -sf /root/.local/bin/semgrep /usr/local/bin/semgrep
+
+RUN curl -fsSL -o /usr/local/bin/linpeas https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh \
+    && chmod +x /usr/local/bin/linpeas \
+    && curl -fsSL -o /usr/local/bin/lse https://raw.githubusercontent.com/diego-treitos/linux-smart-enumeration/master/lse.sh \
+    && chmod +x /usr/local/bin/lse \
+    && curl -fsSL -o /usr/local/bin/linux-exploit-suggester https://raw.githubusercontent.com/The-Z-Labs/linux-exploit-suggester/master/linux-exploit-suggester.sh \
+    && chmod +x /usr/local/bin/linux-exploit-suggester
+
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+         amd64) pspy_asset="pspy64" ;; \
+         arm64) pspy_asset="pspy64s" ;; \
+         *) pspy_asset="pspy64" ;; \
+       esac \
+    && curl -fsSL -o /usr/local/bin/pspy64 "https://github.com/DominicBreuker/pspy/releases/latest/download/${pspy_asset}" \
+    && chmod +x /usr/local/bin/pspy64
+
+RUN curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
 COPY kali-headless/ /usr/local/bin/
 
-RUN chmod +x /usr/local/bin/osint-* /usr/local/bin/onchain-* /usr/local/bin/coop-* /usr/local/bin/jwt-tool
+RUN chmod +x /usr/local/bin/osint-* /usr/local/bin/onchain-* /usr/local/bin/coop-* /usr/local/bin/local-* /usr/local/bin/jwt-tool
 
 RUN ln -sf /root/.local/bin/slither /usr/local/bin/slither \
     && ln -sf /root/.local/bin/crytic-compile /usr/local/bin/crytic-compile \

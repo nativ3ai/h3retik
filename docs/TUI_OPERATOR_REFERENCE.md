@@ -29,6 +29,7 @@ Global navigation and execution:
 - `x` — replay selected event/action
 - `v` — toggle LOOT raw/analyzed view
 - `o` — switch to OSINT scope
+- `y` — switch to LOCAL scope
 - `c` — switch to ONCHAIN scope
 - `g` — switch to CO-OP scope
 - `m` — ARCH map mode toggle (`exploit` + `onchain`)
@@ -152,6 +153,7 @@ Status/tags in options:
 Scopes are operator lanes:
 
 - `exploit` (default): offensive recon-to-impact workflows.
+- `local`: local file/package/binary/internal redteam workflows.
 - `osint`: investigation pipeline workflows (seed -> enrichment -> analysis).
 - `onchain`: chain/RPC/flow/audit workflows.
 - `coop`: backend-agnostic collaboration workflows (`CALDERA` or `WILDMESH`).

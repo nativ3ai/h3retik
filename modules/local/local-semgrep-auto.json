@@ -1,0 +1,28 @@
+{
+  "id": "local-semgrep-auto",
+  "mode": "local",
+  "group": "Code",
+  "runtime": "kali",
+  "label": "Semgrep Auto Rules",
+  "description": "Run semgrep auto rules on a local target path.",
+  "command_template": "local-package-audit {{input:target_path}}",
+  "enabled": true,
+  "tags": ["local", "code", "sast"],
+  "inputs": [
+    {
+      "key": "target_path",
+      "label": "Target Path",
+      "default": "/workspace",
+      "required": true,
+      "type": "text"
+    }
+  ],
+  "evidence": {
+    "loot_kind": "local-artifact",
+    "loot_name": "Local package audit",
+    "finding_severity": "medium",
+    "finding_title": "Local package audit completed",
+    "finding_impact": "Potential vulnerabilities and secrets surfaced from local repository/package scan.",
+    "phase": "local"
+  }
+}

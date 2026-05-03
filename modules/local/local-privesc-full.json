@@ -1,0 +1,28 @@
+{
+  "id": "local-privesc-full",
+  "mode": "local",
+  "group": "Privilege",
+  "runtime": "kali",
+  "label": "Local PrivEsc Recon",
+  "description": "Run privilege escalation discovery wrappers and capture artifacts.",
+  "command_template": "local-privesc {{input:target_path}}",
+  "enabled": true,
+  "tags": ["local", "privesc"],
+  "inputs": [
+    {
+      "key": "target_path",
+      "label": "Target Path",
+      "default": "/workspace",
+      "required": true,
+      "type": "text"
+    }
+  ],
+  "evidence": {
+    "loot_kind": "local-artifact",
+    "loot_name": "Local privesc recon",
+    "finding_severity": "high",
+    "finding_title": "Privilege escalation signals discovered",
+    "finding_impact": "Local privilege escalation opportunities may exist based on host misconfiguration indicators.",
+    "phase": "local"
+  }
+}

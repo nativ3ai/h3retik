@@ -109,7 +109,7 @@ h3retik pipeline --target http://127.0.0.1:3000 --profile quick
 
 ## Failure Triage
 
-- Wrong scope? (`exploit/osint/onchain/coop`)
+- Wrong scope? (`exploit/local/osint/onchain/coop`)
 - Wrong target? (`CTRL -> TARGET`)
 - Runtime not reachable? (`doctor`, container env vars)
 - No new evidence? switch to minimal recon and rebuild chain from telemetry

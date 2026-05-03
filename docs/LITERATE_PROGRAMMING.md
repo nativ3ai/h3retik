@@ -1,4 +1,4 @@
-# Literate Programming Guide — h3retik v0.0.3
+# Literate Programming Guide — h3retik v0.0.4
 
 This document is written as an executable narrative: every capability maps to concrete files and commands.
 
@@ -18,6 +18,7 @@ h3retik unifies execution, evidence, and operator state into one loop.
 The control plane supports mode-scoped workflows:
 
 - exploit
+- local
 - osint
 - onchain
 - coop (CALDERA C2)
@@ -58,12 +59,14 @@ This is the canonical source for OPS/PWNED/LOOT/MAP rendering.
 ### 3.2 Modular Extensions
 
 - `modules/exploit/*.json` — dynamic fireable modules in CTRL
+- `modules/local/*.json` — local lane dynamic modules in CTRL
 
 ### 3.3 Headless Wrappers
 
 - `kali-headless/osint-*`
 - `kali-headless/onchain-*`
 - `kali-headless/coop-*`
+- `kali-headless/local-*`
 
 ## 4. Operational Loop
 
@@ -74,12 +77,12 @@ This is the canonical source for OPS/PWNED/LOOT/MAP rendering.
 5. Explore relationships and access paths in MAP
 6. Iterate with OPSEC-aware next actions
 
-## 5. Release v0.0.3 Contract
+## 5. Release v0.0.4 Contract
 
-v0.0.3 guarantees:
+v0.0.4 guarantees:
 
 - single global command (`h3retik`)
-- preconfigured Kali image tag (`h3retik/kali:v0.0.3`)
+- preconfigured Kali image tag (`h3retik/kali:v0.0.4`)
 - agent skill profile (`SKILL.md`)
 - documented capabilities (`docs/CAPABILITIES.md`)
 
@@ -93,9 +96,16 @@ h3retik doctor
 h3retik
 ```
 
-## 7. Next SOTA Milestones (post v0.0.3)
+## 7. Next SOTA Milestones (post v0.0.4)
 
 - multi-operator shared ops space (presence, role separation, conflict controls)
 - blue-team co-observation panel with remediation proposals
 - signed module marketplace and capability policy sandbox
 - immutable evidence ledger + report provenance
+
+## 8. Canonical Reading Order
+
+- `docs/START_HERE.md`
+- `docs/TUI_OPERATOR_REFERENCE.md`
+- `docs/PIPELINES_AND_COMMANDS.md`
+- `docs/CAPABILITIES.md`

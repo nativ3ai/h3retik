@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /artifacts/local
+stamp="$(date -u +%Y%m%d-%H%M%S)"
+out="/artifacts/local/internal-recon-${stamp}.txt"
+{
+  echo "[local] internal recon"
+  ip -br a 2>/dev/null || true
+  ip route 2>/dev/null || true
+  command -v smbclient >/dev/null 2>&1 && smbclient -L localhost -N 2>/dev/null | head -n 80 || echo "[warn] smbclient missing"
+  command -v ldapsearch >/dev/null 2>&1 && ldapsearch -x -H ldap://127.0.0.1 -s base 2>/dev/null | head -n 80 || echo "[warn] ldapsearch missing"
+  command -v rpcclient >/dev/null 2>&1 && rpcclient -U "" -N 127.0.0.1 -c enumdomusers 2>/dev/null | head -n 80 || echo "[warn] rpcclient missing"
+  command -v netexec >/dev/null 2>&1 && netexec smb 127.0.0.1 --shares 2>/dev/null | head -n 80 || echo "[warn] netexec missing"
+} | tee "$out"
+echo "[local] artifact=$out"

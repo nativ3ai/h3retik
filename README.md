@@ -1,4 +1,4 @@
-# h3retik v0.0.4
+# h3retik v0.0.5
 
 SOTA red teaming operations cockpit: headless Kali execution, gamified operator UX, and evidence-first telemetry.
 
@@ -32,14 +32,14 @@ SOTA red teaming operations cockpit: headless Kali execution, gamified operator 
 
 ## What It Does
 - Gamifies redteaming hacking opex through an intuitive TUI
-- Runs exploit, OSINT, onchain, and co-op/C2 workflows from one keyboard-first control plane.
+- Runs exploit, local-file/package, OSINT, onchain, and co-op/C2 workflows from one keyboard-first control plane.
 - Executes operator actions as reproducible headless CLI commands (`kali` or `local`).
 - Captures structured evidence in telemetry streams (`commands`, `findings`, `loot`, `exploits`).
 - Maps operations into fast views (`OPS`, `PWNED`, `LOOT`, `MAP`) with OPSEC signal and next actions.
 
 ## Why H3retik
 
-- Operator-first design with mode-scoped workflow (`exploit`, `osint`, `onchain`, `coop`).
+- Operator-first design with mode-scoped workflow (`exploit`, `local`, `osint`, `onchain`, `coop`).
 - Target-agnostic execution from target URL + discovered evidence.
 - Unified runtime: packaged Kali + wrappers + modular pipelines.
 - Gamified but professional UX for real operations tempo.
@@ -92,7 +92,7 @@ Go clarity:
 - `h3retik setup` explains this path and can attempt dependency install.
 
 Runtime footprint:
-- Current Kali image size on disk: ~`17–18GB` (`h3retik/kali:v0.0.4`).
+- Current Kali image size on disk: ~`17–18GB` (`h3retik/kali:v0.0.5`).
 - Recommended free disk for first install/build + artifacts: `30GB+` (better: `40GB`).
 - Recommended memory: `8GB+` (`16GB` preferred for heavy scan/fuzz workloads).
 
@@ -114,20 +114,35 @@ bash -lc 'curl -fsSL https://raw.githubusercontent.com/nativ3ai/h3retik/main/scr
 
 ```bash
 npm i -g @h1dr4/h3retik
-h3retik
+h3retik init
+```
+
+Non-interactive universal default:
+
+```bash
+npm i -g @h1dr4/h3retik
+h3retik init --yes --profile full
 ```
 
 npm package behavior by platform:
 - macOS/Linux: installs and invokes the native `h3retik` launcher (`scripts/install_h3retik.sh`) and keeps full CLI parity.
 - Windows: runs a native Node launcher, ensures `juicetui.exe`, brings up Docker Compose runtime, then starts the TUI.
 - Binary bootstrap: pulls prebuilt `juicetui_<version>_<os>_<arch>.tar.gz` from GitHub Releases; if unavailable, falls back to local `go build`.
+- Guided modular setup: `h3retik init` / `h3retik setup` prompts for profile:
+  - `TUI only` (no Docker auto-up)
+  - `Full Docker runtime + TUI`
+  - `Headless CLI only`
+  - `Custom` (native setup wizard)
+- Fully non-interactive install path:
+  - `h3retik init --yes --profile full`
+  - `h3retik init --yes --profile tui-only`
+  - `h3retik init --yes --profile headless`
 
 For Windows, Docker Desktop must be running. Native `h3retik` command works directly from PowerShell:
 
 ```powershell
 npm i -g @h1dr4/h3retik
-h3retik up
-h3retik
+h3retik init
 ```
 
 What the all-in-one installer does:
@@ -161,6 +176,7 @@ ln -sf "$(pwd)/SKILL.md" ~/.codex/skills/h3retik/SKILL.md
 
 ```bash
 h3retik                          # start kali + launch TUI
+h3retik init                     # guided modular install profile
 h3retik setup                    # guided first-run setup (runtime mode, deps, optional bundles)
 h3retik attach                   # attach TUI to existing running kali container (no compose up)
 h3retik --kali-container my-kali tui
@@ -180,7 +196,14 @@ h3retik tools install ad-plus
 h3retik tools install k8s-plus
 h3retik tools install crack-plus
 h3retik tools install coop-plus    # install wildmesh collaboration runtime
+h3retik tools install local-plus   # install local redteam suite (privesc/binary/code/internal)
+h3retik tools install local-plus --strict # fail if any requested local tool is missing
 h3retik kali "<cmd>"             # execute command in kali container
+h3retik local stack-check        # local lane stack check wrappers
+h3retik local privesc /workspace # local lane privesc wrappers
+h3retik local binary /workspace  # local lane binary triage wrappers
+h3retik local package /workspace # local lane package/code audit wrappers
+h3retik local internal           # local lane internal recon wrappers
 h3retik coop caldera <cmd>       # caldera helpers (check/up/status/stop/api/report)
 h3retik coop wildmesh <cmd>      # wildmesh helpers (check/setup/up/status/discover/policy/sync/automate/stop)
 h3retik update                   # pull latest repo + reinstall global launcher
@@ -191,14 +214,26 @@ h3retik doctor                   # runtime checks
 - Use `h3retik update` to pull latest upstream changes and refresh the installed runtime.
 - To bypass first-run setup in automation, set `H3RETIK_NO_SETUP_WIZARD=1`.
 - Setup state/config is persisted in `~/.config/h3retik` (override with `H3RETIK_CONFIG_DIR`).
+- TUI fast mode keys in CTRL: `o` OSINT, `y` LOCAL, `c` ONCHAIN, `g` CO-OP.
+
+## Documentation Map (Canonical)
+
+- Start here: [`docs/START_HERE.md`](docs/START_HERE.md)
+- Fast daily operator flow: [`docs/OPERATOR_CHEATSHEET.md`](docs/OPERATOR_CHEATSHEET.md)
+- Full TUI reference: [`docs/TUI_OPERATOR_REFERENCE.md`](docs/TUI_OPERATOR_REFERENCE.md)
+- Full command matrix: [`docs/PIPELINES_AND_COMMANDS.md`](docs/PIPELINES_AND_COMMANDS.md)
+- Capability matrix: [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
+- Tool inventory: [`docs/TOOLS_REFERENCE.md`](docs/TOOLS_REFERENCE.md)
+- Local exploit workflows: [`docs/LOCAL_LANE_RUNBOOK.md`](docs/LOCAL_LANE_RUNBOOK.md)
+- Agent orchestration workflows: [`docs/AGENT_ORCHESTRATION_COOKBOOK.md`](docs/AGENT_ORCHESTRATION_COOKBOOK.md)
 
 ## Maintainer Release (Git tag + npm)
 
 ```bash
 # 1) bump version in VERSION + package.json
 # 2) push tag (publishes cross-platform juicetui assets via GitHub Actions)
-git tag v0.0.4
-git push origin v0.0.4
+git tag v0.0.5
+git push origin v0.0.5
 
 # 3) publish npm package
 npm publish --access public
@@ -252,6 +287,7 @@ Important:
 Minimum compatibility checklist for external Kali images:
 - Base runtime: `bash`, `python3`, `curl`, `jq`, `git`.
 - Exploit lane core: `nmap`, `ffuf`, `nikto`, `sqlmap`, `hydra`, `medusa`, `nuclei`, `metasploit-framework`.
+- Local lane core: `linpeas`, `lse`, `pspy`, `linux-exploit-suggester`, `checksec`, `radare2`, `semgrep`, `gitleaks`, `trivy`, `grype`.
 - OSINT lane core: `theharvester`, `bbot`, `spiderfoot`, `recon-ng`, `rengine` (or equivalent callable wrapper).
 - Onchain lane core: `slither`, `myth` (mythril), `forge`, `cast`, `echidna`, `medusa`, `halmos`.
 - Co-op lane core: `caldera` and/or `wildmesh` + wrappers (`coop-caldera-*`, `coop-wildmesh-*`).
@@ -260,7 +296,7 @@ If you want full feature parity, use `h3retik up` with the default bundled Kali 
 
 ## Runtime + Suite
 
-- Kali image: `h3retik/kali:v0.0.4`
+- Kali image: `h3retik/kali:v0.0.5`
 - Compose service: `kali` (`${H3RETIK_KALI_CONTAINER:-h3retik-kali}`)
 - Mounted volumes:
   - `./telemetry -> /telemetry`
@@ -329,7 +365,7 @@ This keeps TUI state and headless execution synchronized, replayable, and export
 
 ## Operational Model (h3retik vs typical red-team TUI)
 
-| Dimension | Typical toolchains | h3retik v0.0.4 |
+| Dimension | Typical toolchains | h3retik v0.0.5 |
 |---|---|---|
 | Execution model | Mixed terminals and ad hoc scripts | Unified headless CLI bus (`kali` + `local`) |
 | Evidence model | Scattered outputs | Structured telemetry (`commands/findings/loot/exploits`) |
@@ -363,6 +399,6 @@ h3retik
 
 ## Security Reporting
 
-- Supported release line: `v0.0.4` (latest tagged release on `main`).
+- Supported release line: `v0.0.5` (latest tagged release on `main`).
 - Report vulnerabilities privately through GitHub Security Advisories (preferred) or direct maintainer contact.
 - Do not publish exploitable details in public issues before coordinated disclosure.
