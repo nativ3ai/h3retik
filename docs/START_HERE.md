@@ -82,4 +82,18 @@ Use `group` in module JSON to keep telemetry/category views clean.
 - Canonical command catalog: `docs/PIPELINES_AND_COMMANDS.md`
 - Canonical capability map: `docs/CAPABILITIES.md`
 
+## 7) Cloud companion (hosted h3retik)
+
+- Portal: `https://h1dr4.dev/h3retik`
+- API: `https://h1dr4.dev/h3retik/api`
+- Agent cloud skill: `https://h1dr4.dev/h3retik/skills/h3retik-agent.md`
+
+Use local built-in pipelines in cloud without adding a new endpoint:
+
+```bash
+h3retik pipeline-cloud --target https://target.tld --pipeline full-chain
+```
+
+Then copy `suggested_cloud_job_cmd` into cloud job `args.cmd` and lease tools as needed.
+
 If another doc conflicts, trust these canonical files.

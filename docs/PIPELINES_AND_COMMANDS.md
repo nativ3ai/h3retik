@@ -16,11 +16,16 @@ This document explains all operator command surfaces: `h3retik` CLI, TUI `CTRL` 
 - `h3retik coop wildmesh <check|setup|up|status|discover|policy|sync|automate|stop>` — WildMesh helpers
 - `h3retik target <args...>` — passthrough to `scripts/targetctl.py`
 - `h3retik pipeline <args...>` — passthrough to `scripts/security_pipeline.py`
+- `h3retik pipeline-cloud <args...>` — expand built-in named pipeline into cloud-ready command payload
 - `h3retik observatory <args...>` — passthrough to `scripts/observatory_runner.py`
 - `python3 ./scripts/telemetryctl.py new-campaign` — archive current run then reset live telemetry/artifacts while keeping active target scope
 - `h3retik reset` — reset telemetry/custom target
 - `h3retik doctor` — runtime checks
 - `h3retik install` — global launcher install
+
+Cloud companion entrypoints:
+- `https://h1dr4.dev/h3retik`
+- `https://h1dr4.dev/h3retik/api`
 
 Modular install strict mode:
 

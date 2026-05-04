@@ -10,6 +10,10 @@ This is the practical guide for running `h3retik` through autonomous/assistant a
 4. Read telemetry before claims
 5. Pick next action from evidence
 
+Cloud route for agents:
+- `https://h1dr4.dev/h3retik/skills/h3retik-agent.md`
+- `https://h1dr4.dev/h3retik/api`
+
 ## Minimal reporting format
 
 Every agent update should include:
@@ -27,6 +31,14 @@ Exploit lane:
 ```bash
 h3retik pipeline --target http://127.0.0.1:3000 --profile quick
 ```
+
+Pipeline portability to cloud:
+
+```bash
+h3retik pipeline-cloud --target http://127.0.0.1:3000 --pipeline full-chain
+```
+
+Use `suggested_cloud_job_cmd` as cloud `args.cmd`.
 
 Local lane:
 
