@@ -18,15 +18,19 @@ rm -rf "$VERT_DIR" "$MAIN_DIR"
 python3 "$PROMO_DIR/render_promo_frames.py" \
   --width 1080 --height 1920 \
   --out-dir "$VERT_DIR" \
-  --ascii-json "$ROOT/assets/skull_pixel_loading_frames.json"
+  --startup-json "$ROOT/assets/skull_flying_frames.json" \
+  --loading-json "$ROOT/assets/skull_pixel_loading_frames.json" \
+  --repo-root "$ROOT"
 
 python3 "$PROMO_DIR/render_promo_frames.py" \
   --width 1920 --height 1080 \
   --out-dir "$MAIN_DIR" \
-  --ascii-json "$ROOT/assets/skull_pixel_loading_frames.json"
+  --startup-json "$ROOT/assets/skull_flying_frames.json" \
+  --loading-json "$ROOT/assets/skull_pixel_loading_frames.json" \
+  --repo-root "$ROOT"
 
-ffmpeg -y -framerate 30 -i "$VERT_DIR/frame_%05d.png" -c:v libx264 -pix_fmt yuv420p -crf 20 -preset medium "$OUT_DIR/promo_h3retik_short.mp4"
-ffmpeg -y -framerate 30 -i "$MAIN_DIR/frame_%05d.png" -c:v libx264 -pix_fmt yuv420p -crf 20 -preset medium "$OUT_DIR/promo_h3retik_main.mp4"
+ffmpeg -y -framerate 30 -i "$VERT_DIR/frame_%05d.png" -c:v libx264 -pix_fmt yuv420p -crf 18 -preset medium "$OUT_DIR/promo_h3retik_short.mp4"
+ffmpeg -y -framerate 30 -i "$MAIN_DIR/frame_%05d.png" -c:v libx264 -pix_fmt yuv420p -crf 18 -preset medium "$OUT_DIR/promo_h3retik_main.mp4"
 
 echo "Rendered:"
 echo "  $OUT_DIR/promo_h3retik_short.mp4"
