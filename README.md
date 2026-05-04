@@ -165,7 +165,12 @@ First run launches a guided safe installer wizard automatically:
 - `bundled`: managed Kali container (recommended)
 - `attach`: attach to your own existing Docker Kali/container
 - `local`: local-only mode (no Kali/Docker)
-- optional bundle install, including `local-plus` (local exploit suite)
+- modular tool footprint profiles:
+- `minimal` (base runtime only)
+- `local-lite` (local exploit lane pack)
+- `web-lite` (web lane packs)
+- `full` (all bundled packs)
+- custom bundle checklist or custom comma-separated tool list
 
 Optional agent skill wiring (for agent runtimes that support local skills):
 

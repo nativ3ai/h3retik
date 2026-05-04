@@ -118,6 +118,49 @@ ask_menu() {
   fi
 }
 
+ask_checklist() {
+  local prompt="$1"
+  shift
+  local items=("$@")
+  local value=""
+  if [[ "$ui_mode" == "whiptail" ]]; then
+    value=$(whiptail --title "h3retik setup" --checklist "$prompt" 22 110 12 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
+    value="${value//\"/}"
+    printf '%s' "$value"
+  elif [[ "$ui_mode" == "dialog" ]]; then
+    value=$(dialog --title "h3retik setup" --checklist "$prompt" 22 110 12 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
+    clear
+    value="${value//\"/}"
+    printf '%s' "$value"
+  else
+    say "$prompt"
+    local idx=1
+    local keys=()
+    while [[ $# -gt 0 ]]; do
+      local key="$1"; shift
+      local desc="$1"; shift
+      shift # status
+      say "  $idx) $desc [$key]"
+      keys+=("$key")
+      idx=$((idx+1))
+    done
+    local raw
+    read -r -p "Select one or more numbers (comma-separated, blank to skip): " raw
+    raw="${raw// /}"
+    [[ -n "$raw" ]] || return 0
+    local out=()
+    IFS=',' read -r -a picks <<< "$raw"
+    for p in "${picks[@]}"; do
+      [[ "$p" =~ ^[0-9]+$ ]] || continue
+      local pos=$((p-1))
+      if [[ $pos -ge 0 && $pos -lt ${#keys[@]} ]]; then
+        out+=("${keys[$pos]}")
+      fi
+    done
+    printf '%s' "${out[*]}"
+  fi
+}
+
 ensure_bin() {
   local bin="$1"
   command -v "$bin" >/dev/null 2>&1
@@ -223,21 +266,53 @@ if [[ "$runtime_choice" == "bundled" ]]; then
   H3RETIK_KALI_CONTAINER="$kali_container" H3RETIK_KALI_IMAGE="$kali_image" "$ROOT/h3retik" up || true
 fi
 
-if ask_yes_no "Install optional bundles now? (You can also do this later with: h3retik tools install <bundle>)" "no"; then
-  bundle=$(ask_menu "Choose optional bundle" \
-    recon-plus "Recon Plus (masscan/rustscan/naabu/zmap/nbtscan/subfinder)" \
-    web-adv-plus "Web Adv Plus (katana/gau/dalfox/httpx/jwt-tool)" \
-    ad-plus "AD Plus (kerbrute/ldapdomaindump/certipy/evil-winrm)" \
-    k8s-plus "K8S Plus (trivy/kubescape/kube-hunter)" \
-    crack-plus "Crack Plus (hashcat/john)" \
-    coop-plus "Co-op Plus (wildmesh)" \
-    local-plus "Local Plus (linpeas/lse/pspy/semgrep/gitleaks/trivy/grype)") || bundle=""
-  if [[ -n "$bundle" ]]; then
-    if [[ "$runtime_choice" == "local" ]]; then
-      show_info "Optional tool bundle install requires Kali runtime. Skipping now.\nYou can still add local user tools with:\n  h3retik modules add-local-tool ..."
-    else
-      H3RETIK_KALI_CONTAINER="$kali_container" "$ROOT/h3retik" tools install "$bundle" || true
-    fi
+install_spec=""
+if ask_yes_no "Configure tool footprint now? (Lite/custom/full modular install)" "yes"; then
+  profile=$(ask_menu "Choose installation profile" \
+    minimal "Minimal (base runtime only)" \
+    local-lite "Lite preset: local exploit lane only (local-plus)" \
+    web-lite "Lite preset: web lane only (recon-plus + web-adv-plus)" \
+    full "Full preset: all bundled lane packs" \
+    custom-bundles "Custom: choose bundled packs" \
+    custom-tools "Custom: enter individual tool names") || profile="minimal"
+  case "$profile" in
+    minimal)
+      install_spec=""
+      ;;
+    local-lite)
+      install_spec="local-plus"
+      ;;
+    web-lite)
+      install_spec="recon-plus,web-adv-plus"
+      ;;
+    full)
+      install_spec="recon-plus,web-adv-plus,ad-plus,k8s-plus,crack-plus,coop-plus,local-plus"
+      ;;
+    custom-bundles)
+      selected="$(ask_checklist "Select one or more bundle packs" \
+        recon-plus "Recon Plus (masscan/rustscan/naabu/zmap/nbtscan/subfinder)" OFF \
+        web-adv-plus "Web Adv Plus (katana/gau/dalfox/httpx/jwt-tool)" OFF \
+        ad-plus "AD Plus (kerbrute/ldapdomaindump/certipy/evil-winrm)" OFF \
+        k8s-plus "K8S Plus (trivy/kubescape/kube-hunter)" OFF \
+        crack-plus "Crack Plus (hashcat/john)" OFF \
+        coop-plus "Co-op Plus (wildmesh)" OFF \
+        local-plus "Local Plus (linpeas/lse/pspy/semgrep/gitleaks/trivy/grype)" OFF)" || selected=""
+      if [[ -n "$selected" ]]; then
+        install_spec="$(echo "$selected" | tr ' ' ',' | sed 's/,,*/,/g; s/^,//; s/,$//')"
+      fi
+      ;;
+    custom-tools)
+      install_spec="$(ask_input "Enter comma-separated individual tools (example: nmap,ffuf,sqlmap,semgrep)" "")" || install_spec=""
+      install_spec="$(echo "$install_spec" | tr -d ' ' | sed 's/,,*/,/g; s/^,//; s/,$//')"
+      ;;
+  esac
+fi
+
+if [[ -n "$install_spec" ]]; then
+  if [[ "$runtime_choice" == "local" ]]; then
+    show_info "Tool install into Kali runtime is unavailable in local mode. Saved no runtime install.\nYou can still register local tools with:\n  h3retik modules add-local-tool ..."
+  else
+    H3RETIK_KALI_CONTAINER="$kali_container" "$ROOT/h3retik" tools install "$install_spec" || true
   fi
 fi
 
