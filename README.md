@@ -258,21 +258,13 @@ Use `suggested_cloud_job_cmd` as cloud job `args.cmd` and lease/install needed t
 - Local exploit workflows: [`docs/LOCAL_LANE_RUNBOOK.md`](docs/LOCAL_LANE_RUNBOOK.md)
 - Agent orchestration workflows: [`docs/AGENT_ORCHESTRATION_COOKBOOK.md`](docs/AGENT_ORCHESTRATION_COOKBOOK.md)
 
-## Maintainer Release (Git tag + npm)
+## Maintainer Release
 
-```bash
-# 1) bump version in VERSION + package.json
-# 2) push tag (publishes cross-platform juicetui assets via GitHub Actions)
-git tag v0.0.5
-git push origin v0.0.5
-
-# 3) publish npm package
-npm publish --access public
-```
-
-Package names:
-- Preferred: `@h1dr4/h3retik` (scoped, org-owned).
-- Optional if unclaimed: `h3retik` (unscoped).
+Release publishing is maintainer-only and intentionally kept out of contributor workflow docs.
+Contributors should focus on:
+- reproducible code quality (`bash -n`, tests, smoke checks)
+- documentation clarity and canonical docs updates
+- non-breaking modular changes with telemetry continuity
 
 ## Existing Kali / External Runtime
 

@@ -738,7 +738,7 @@ func TestExploitAPIDiscoveryIgnoresNoisyCredentialArtifactText(t *testing.T) {
 			Preview: "found endpoint",
 		},
 	}
-	endpoints := exploitAPIDiscovery(nil, loot, "http://target.example:8080")
+	endpoints := exploitAPIDiscovery(nil, nil, loot, "http://target.example:8080")
 	joined := strings.Join(endpoints, "\n")
 	if !strings.Contains(joined, "http://target.example:8080/api/users") {
 		t.Fatalf("expected sanitized /api/users endpoint, got %v", endpoints)
@@ -774,7 +774,7 @@ func TestExploitInnerTargetsIncludesMappedEndpoints(t *testing.T) {
 	loot := []lootEntry{
 		{Kind: "path", Source: "/api/products"},
 	}
-	targets := exploitInnerTargets(findings, loot, "http://target.example:8080")
+	targets := exploitInnerTargets(nil, findings, loot, "http://target.example:8080")
 	joined := strings.Join(targets, "\n")
 	if !strings.Contains(joined, "http://target.example:8080/api/users") {
 		t.Fatalf("expected /api/users in inner target map, got %v", targets)
@@ -785,7 +785,7 @@ func TestExploitInnerTargetsIncludesMappedEndpoints(t *testing.T) {
 }
 
 func TestExploitInnerTargetsAvoidsHardcodedAuthFallbacks(t *testing.T) {
-	targets := exploitInnerTargets(nil, nil, "http://target.example:8080")
+	targets := exploitInnerTargets(nil, nil, nil, "http://target.example:8080")
 	joined := strings.Join(targets, "\n")
 	if strings.Contains(joined, "/api/login") || strings.Contains(joined, "/oauth/token") || strings.Contains(joined, "/auth") {
 		t.Fatalf("unexpected hardcoded auth fallback targets: %v", targets)

@@ -2305,9 +2305,11 @@ func lootCredentialFitEndpoints(root, targetURL string, seed lootEntry) []string
 	}
 	allLoot := loadJSONL[lootEntry](filepath.Join(root, "telemetry", "loot.jsonl"))
 	allFindings := loadJSONL[findingEntry](filepath.Join(root, "telemetry", "findings.jsonl"))
+	allCommands := collapseCommandEvents(loadJSONL[commandEntry](filepath.Join(root, "telemetry", "commands.jsonl")))
 	allLoot = append(allLoot, seed)
 	exploitLoot := lootByMode(allLoot, "exploit")
 	exploitFindings := findingsByMode(allFindings, "exploit")
+	exploitCommands := commandsByMode(allCommands, "exploit")
 	out := []string{}
 	seen := map[string]bool{}
 	add := func(raw string) {
@@ -2331,10 +2333,10 @@ func lootCredentialFitEndpoints(root, targetURL string, seed lootEntry) []string
 		out = append(out, rebased)
 	}
 	add(seed.Source)
-	for _, endpoint := range exploitAPIDiscovery(exploitFindings, exploitLoot, base) {
+	for _, endpoint := range exploitAPIDiscovery(exploitCommands, exploitFindings, exploitLoot, base) {
 		add(endpoint)
 	}
-	for _, endpoint := range exploitInnerTargets(exploitFindings, exploitLoot, base) {
+	for _, endpoint := range exploitInnerTargets(exploitCommands, exploitFindings, exploitLoot, base) {
 		lower := strings.ToLower(strings.TrimSpace(endpoint))
 		if strings.Contains(lower, "/api/") ||
 			strings.Contains(lower, "/rest/") ||
@@ -2389,6 +2391,7 @@ func (m model) archCredentialFitScanAction(node attackGraphNode) (controlAction,
 	}
 	exploitLoot := lootByMode(m.loot, "exploit")
 	exploitFindings := findingsByMode(m.findings, "exploit")
+	exploitCommands := commandsByMode(m.commands, "exploit")
 	endpointSet := map[string]bool{}
 	endpoints := []string{}
 	addEndpoint := func(raw string) {
@@ -2410,7 +2413,7 @@ func (m model) archCredentialFitScanAction(node attackGraphNode) (controlAction,
 	if kind == "endpoint" || kind == "collection" || kind == "record" {
 		addEndpoint(node.Ref)
 	}
-	for _, endpoint := range exploitAPIDiscovery(exploitFindings, exploitLoot, m.state.TargetURL) {
+	for _, endpoint := range exploitAPIDiscovery(exploitCommands, exploitFindings, exploitLoot, m.state.TargetURL) {
 		addEndpoint(endpoint)
 		if len(endpoints) >= 12 {
 			break
@@ -3584,7 +3587,7 @@ func (m *model) reload() {
 	if len(onchainInputTypes()) > 0 {
 		m.onchainTargetTypeIdx = clamp(m.onchainTargetTypeIdx, 0, len(onchainInputTypes())-1)
 	}
-	if targets := exploitInnerTargets(findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL); len(targets) > 0 {
+	if targets := exploitInnerTargets(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL); len(targets) > 0 {
 		m.exploitInnerTargetIdx = clampWrap(m.exploitInnerTargetIdx, len(targets))
 	} else {
 		m.exploitInnerTargetIdx = 0
@@ -5528,7 +5531,7 @@ func (m model) controlOptionsPanel(width int, actions []controlAction) string {
 				metricLine("network", m.selectedOnchainProfile().Label),
 			)
 		} else {
-			mapped := exploitInnerTargets(findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
+			mapped := exploitInnerTargets(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
 			selected := "none"
 			if len(mapped) > 0 {
 				selected = mapped[clampWrap(m.exploitInnerTargetIdx, len(mapped))]
@@ -9510,7 +9513,7 @@ func authenticatedWriteProven(commands []commandEntry, findings []findingEntry, 
 	return hasCommandMatch(commands, " -x put ") || hasCommandMatch(commands, " -x patch ") || hasCommandMatch(commands, " -x delete ") || hasCommandMatch(commands, " put /api/") || hasCommandMatch(commands, " patch /api/")
 }
 
-func exploitAPIDiscovery(findings []findingEntry, loot []lootEntry, targetURL string) []string {
+func exploitAPIDiscovery(commands []commandEntry, findings []findingEntry, loot []lootEntry, targetURL string) []string {
 	base := strings.TrimSpace(targetURL)
 	if base == "" {
 		return nil
@@ -9640,6 +9643,10 @@ func exploitAPIDiscovery(findings []findingEntry, loot []lootEntry, targetURL st
 	for _, finding := range findings {
 		add(finding.Endpoint)
 	}
+	for _, cmd := range commands {
+		add(cmd.Command)
+		add(cmd.OutputPreview)
+	}
 	for _, item := range loot {
 		add(item.Source)
 		add(item.Name)
@@ -9653,7 +9660,7 @@ func exploitAPIDiscovery(findings []findingEntry, loot []lootEntry, targetURL st
 	return out
 }
 
-func exploitInnerTargets(findings []findingEntry, loot []lootEntry, targetURL string) []string {
+func exploitInnerTargets(commands []commandEntry, findings []findingEntry, loot []lootEntry, targetURL string) []string {
 	base := strings.TrimSpace(targetURL)
 	if base == "" {
 		return nil
@@ -9675,7 +9682,7 @@ func exploitInnerTargets(findings []findingEntry, loot []lootEntry, targetURL st
 		seen[key] = true
 	}
 	add(base)
-	for _, endpoint := range exploitAPIDiscovery(findings, loot, base) {
+	for _, endpoint := range exploitAPIDiscovery(commands, findings, loot, base) {
 		add(endpoint)
 	}
 	for _, item := range loot {
@@ -9689,6 +9696,42 @@ func exploitInnerTargets(findings []findingEntry, loot []lootEntry, targetURL st
 	}
 	sort.Strings(out)
 	return out
+}
+
+func endpointTelemetryLabel(endpoint string) string {
+	trimmed := strings.TrimSpace(endpoint)
+	if trimmed == "" {
+		return "ENDPOINT"
+	}
+	parsed, err := url.Parse(trimmed)
+	path := trimmed
+	if err == nil && strings.TrimSpace(parsed.Path) != "" {
+		path = parsed.Path
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "ENDPOINT"
+	}
+	lower := strings.ToLower(path)
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	last := ""
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
+		if part != "" {
+			last = part
+			break
+		}
+	}
+	switch {
+	case strings.Contains(lower, "/auth"), strings.Contains(lower, "/login"), strings.Contains(lower, "/oauth"):
+		return "AUTH " + strings.ToUpper(truncate(last, 18))
+	case strings.Contains(lower, "/admin"), strings.Contains(lower, "/manage"), strings.Contains(lower, "/console"):
+		return "ADMIN " + strings.ToUpper(truncate(last, 18))
+	case strings.Contains(lower, "/api/"), strings.Contains(lower, "/rest/"):
+		return "API " + strings.ToUpper(truncate(last, 18))
+	default:
+		return "PATH " + strings.ToUpper(truncate(last, 18))
+	}
 }
 
 func bruteCredentialSources() []string {
@@ -9716,7 +9759,7 @@ func (m model) selectedBruteAuthMode() string {
 }
 
 func (m model) selectedExploitInnerTarget() string {
-	targets := exploitInnerTargets(findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
+	targets := exploitInnerTargets(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
 	if len(targets) == 0 {
 		return ""
 	}
@@ -9939,14 +9982,15 @@ func buildExploitAttackGraph(state stateFile, commands []commandEntry, findings 
 		{ID: "auth", Parent: "target", Kind: "cluster", Label: "AUTH LANE", Depth: 1, Pwned: authPwned, Opsec: 55, Detail: "Session/JWT/credential abuse and auth-boundary pivots."},
 		{ID: "api", Parent: "auth", Kind: "cluster", Label: "API LANE", Depth: 2, Pwned: apiPwned, Opsec: 60, Detail: "Authenticated API reads/writes and privilege abuse paths."},
 	}
-	apiEndpoints := exploitAPIDiscovery(findings, loot, state.TargetURL)
+	apiEndpoints := exploitAPIDiscovery(commands, findings, loot, state.TargetURL)
 	endpointNodeByRef := map[string]string{}
 	for idx, endpoint := range apiEndpoints {
 		nodeID := fmt.Sprintf("api-endpoint-%d", idx+1)
+		autoLabel := endpointTelemetryLabel(endpoint)
 		nodes = append(nodes, attackGraphNode{
-			ID: nodeID, Parent: "api", Kind: "endpoint", Ref: endpoint, Label: truncate(endpoint, 58), Depth: 3,
+			ID: nodeID, Parent: "api", Kind: "endpoint", Ref: endpoint, Label: autoLabel + " :: " + truncate(endpoint, 48), Depth: 3,
 			Pwned: hasLootMatch(loot, endpoint) || hasFindingMatch(findings, endpoint), Opsec: 62,
-			Detail: "Discovered API/backend endpoint; selectable for direct exploration.",
+			Detail: "Telemetry-discovered endpoint (auto-labeled from route structure).",
 		})
 		endpointNodeByRef[strings.ToLower(strings.TrimSpace(endpoint))] = nodeID
 	}
@@ -15143,7 +15187,7 @@ func (m model) targetActions() []controlAction {
 			Command:     "target:manual-url",
 		})
 	}
-	innerTargets := exploitInnerTargets(findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
+	innerTargets := exploitInnerTargets(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
 	selectedInner := ""
 	if len(innerTargets) > 0 {
 		selectedInner = innerTargets[clampWrap(m.exploitInnerTargetIdx, len(innerTargets))]
@@ -16671,7 +16715,7 @@ func (m *model) applyInternalAction(action controlAction) {
 		_ = os.Setenv("H3RETIK_COOP_BACKEND", m.selectedCoopBackend())
 		m.controlStatus = "ok :: CO-OP backend -> " + strings.ToUpper(m.selectedCoopBackend())
 	case "target:inner:next":
-		targets := exploitInnerTargets(findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
+		targets := exploitInnerTargets(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
 		if len(targets) == 0 {
 			m.controlStatus = "inner target map unavailable :: no endpoint telemetry yet"
 			break
@@ -16680,7 +16724,7 @@ func (m *model) applyInternalAction(action controlAction) {
 		selected := targets[m.exploitInnerTargetIdx]
 		m.controlStatus = "ok :: inner target -> " + truncate(selected, 72)
 	case "target:inner:prev":
-		targets := exploitInnerTargets(findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
+		targets := exploitInnerTargets(commandsByMode(m.commands, "exploit"), findingsByMode(m.findings, "exploit"), lootByMode(m.loot, "exploit"), m.state.TargetURL)
 		if len(targets) == 0 {
 			m.controlStatus = "inner target map unavailable :: no endpoint telemetry yet"
 			break
