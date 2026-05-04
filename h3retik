@@ -39,6 +39,70 @@ ensure_docker() {
   command -v docker >/dev/null 2>&1 || die "docker is required"
 }
 
+autofix_docker_credentials() {
+  [[ "${H3RETIK_DOCKER_AUTH_AUTOFIX:-1}" == "1" ]] || return 0
+  local docker_cfg="${DOCKER_CONFIG:-$HOME/.docker}"
+  local cfg_file="$docker_cfg/config.json"
+  [[ -f "$cfg_file" ]] || return 0
+  ensure_base_deps
+  H3RETIK_DOCKER_CFG_FILE="$cfg_file" python3 - <<'PY'
+import json
+import os
+import shutil
+import subprocess
+import sys
+from datetime import datetime
+
+cfg_file = os.environ["H3RETIK_DOCKER_CFG_FILE"]
+
+try:
+    with open(cfg_file, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+except Exception:
+    sys.exit(0)
+
+changed = False
+
+def helper_exists(name: str) -> bool:
+    if not name:
+        return True
+    cmd = f"docker-credential-{name}"
+    return subprocess.run(["sh", "-lc", f"command -v {cmd} >/dev/null 2>&1"]).returncode == 0
+
+creds_store = cfg.get("credsStore")
+if isinstance(creds_store, str) and creds_store and not helper_exists(creds_store):
+    cfg.pop("credsStore", None)
+    changed = True
+
+cred_helpers = cfg.get("credHelpers")
+if isinstance(cred_helpers, dict):
+    cleaned = {}
+    removed = False
+    for reg, helper in cred_helpers.items():
+        if isinstance(helper, str) and helper and not helper_exists(helper):
+            removed = True
+            continue
+        cleaned[reg] = helper
+    if removed:
+        if cleaned:
+            cfg["credHelpers"] = cleaned
+        else:
+            cfg.pop("credHelpers", None)
+        changed = True
+
+if not changed:
+    sys.exit(0)
+
+stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+backup = f"{cfg_file}.bak-{stamp}"
+shutil.copy2(cfg_file, backup)
+with open(cfg_file, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2, sort_keys=True)
+    f.write("\n")
+print(f"h3retik: auto-fixed docker credential helper config (backup: {backup})")
+PY
+}
+
 ensure_tui() {
   if [[ -x "$ROOT/bin/juicetui" ]]; then
     return
@@ -65,6 +129,7 @@ build_tui() {
 
 ensure_kali_runtime() {
   ensure_docker
+  autofix_docker_credentials
   if docker inspect "$KALI_CONTAINER" >/dev/null 2>&1; then
     if ! docker inspect -f '{{.State.Running}}' "$KALI_CONTAINER" 2>/dev/null | grep -qi true; then
       echo "h3retik: starting existing container $KALI_CONTAINER"
@@ -838,6 +903,7 @@ fi
     fi
     if [[ "${H3RETIK_RUNTIME_MODE:-bundled}" != "local" ]]; then
       ensure_docker
+      autofix_docker_credentials
       docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || die "docker daemon not reachable"
       if [[ "${H3RETIK_SKIP_UP:-0}" != "1" ]]; then
         ensure_kali_runtime >/dev/null
