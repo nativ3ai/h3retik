@@ -17,6 +17,11 @@ Run exploit, local-file/package, OSINT, onchain, and co-op/C2 workflows from one
 - Headless orchestration: `h3retik pipeline ...`.
 - Direct execution inside Kali: `h3retik kali <cmd...>`.
 
+Cloud companion (hosted):
+- Portal: `https://h1dr4.dev/h3retik`
+- API: `https://h1dr4.dev/h3retik/api`
+- Cloud skill doc: `https://h1dr4.dev/h3retik/skills/h3retik-agent.md`
+
 ## How to Find the Docs (Repo-Relative)
 
 Your environment may place the `h3retik` repository in any directory. Do not assume absolute paths.
@@ -67,6 +72,7 @@ Existing compatible Kali container:
 Headless (non-interactive) alternative:
 
 - `h3retik pipeline --target http://127.0.0.1:8080 --profile standard --pipeline prelim`
+- `h3retik pipeline-cloud --target http://127.0.0.1:8080 --pipeline prelim` (prepare cloud `args.cmd` payload)
 
 ## Mandatory Agent Execution Protocol
 

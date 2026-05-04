@@ -101,7 +101,7 @@ Runtime footprint:
 ### Source install one-liner (global path)
 
 ```bash
-bash -lc 'SRC="${H3RETIK_SRC_DIR:-$HOME/.local/src/h3retik}"; rm -rf "$SRC"; git clone https://github.com/nativ3ai/h3retik.git "$SRC" && cd "$SRC" && ./scripts/install_h3retik.sh && export PATH="$HOME/.local/bin:$PATH" && h3retik up && h3retik'
+bash -lc 'SRC="${H3RETIK_SRC_DIR:-$HOME/.local/src/h3retik}"; rm -rf "$SRC"; git clone https://github.com/nativ3ai/h3retik.git "$SRC" && cd "$SRC" && ./scripts/install_h3retik.sh && export PATH="$HOME/.local/bin:$PATH" && h3retik'
 ```
 
 ### GitHub bootstrap one-liner
@@ -158,9 +158,14 @@ After install:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
-h3retik up
 h3retik
 ```
+
+First run launches a guided safe installer wizard automatically:
+- `bundled`: managed Kali container (recommended)
+- `attach`: attach to your own existing Docker Kali/container
+- `local`: local-only mode (no Kali/Docker)
+- optional bundle install, including `local-plus` (local exploit suite)
 
 Optional agent skill wiring (for agent runtimes that support local skills):
 
@@ -188,6 +193,7 @@ h3retik build-kali               # build kali image
 h3retik target ...               # scripts/targetctl.py passthrough
 h3retik pipeline ...             # scripts/security_pipeline.py passthrough
 h3retik observatory ...          # scripts/observatory_runner.py passthrough
+h3retik pipeline-cloud ...       # convert built-in named pipelines to cloud-ready command payload
 h3retik import-runs <path>       # import campaign telemetry into local telemetry/runs
 h3retik tools list               # list optional on-demand tools in kali
 h3retik tools install recon-plus # install optional recon tool bundle in kali
@@ -220,6 +226,21 @@ h3retik doctor                   # runtime checks
 - To bypass first-run setup in automation, set `H3RETIK_NO_SETUP_WIZARD=1`.
 - Setup state/config is persisted in `~/.config/h3retik` (override with `H3RETIK_CONFIG_DIR`).
 - TUI fast mode keys in CTRL: `o` OSINT, `y` LOCAL, `c` ONCHAIN, `g` CO-OP.
+
+## Cloud Companion
+
+For hosted/on-the-go usage:
+- Portal: `https://h1dr4.dev/h3retik`
+- API base: `https://h1dr4.dev/h3retik/api`
+- Agent cloud skill: `https://h1dr4.dev/h3retik/skills/h3retik-agent.md`
+
+Pipeline portability to cloud without new endpoint:
+
+```bash
+h3retik pipeline-cloud --target https://target.tld --pipeline full-chain
+```
+
+Use `suggested_cloud_job_cmd` as cloud job `args.cmd` and lease/install needed tools first.
 
 ## Documentation Map (Canonical)
 

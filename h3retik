@@ -47,9 +47,6 @@ ensure_tui() {
 }
 
 has_existing_runtime_state() {
-  if [[ -x "$ROOT/bin/juicetui" ]]; then
-    return 0
-  fi
   if docker inspect "$KALI_CONTAINER" >/dev/null 2>&1; then
     return 0
   fi
@@ -271,6 +268,7 @@ Usage:
   h3retik coop [backend] <subcmd>  # co-op helpers (caldera|wildmesh)
   h3retik target <args...>         # passthrough to scripts/targetctl.py
   h3retik pipeline <args...>       # passthrough to scripts/security_pipeline.py
+  h3retik pipeline-cloud <args...> # prepare named pipeline payload for cloud job args.cmd
   h3retik observatory <args...>    # passthrough to scripts/observatory_runner.py
   h3retik import-runs <path> [--all] # import saved campaigns into local telemetry/runs
   h3retik tools list               # show optional tool bundles + installed status (inside kali)
@@ -340,9 +338,6 @@ case "$cmd" in
   tui)
     shift || true
     check_for_updates_prompt
-    if [[ ! -f "$SETUP_MARKER" ]] && has_existing_runtime_state; then
-      touch "$SETUP_MARKER"
-    fi
     if [[ "${H3RETIK_NO_SETUP_WIZARD:-0}" != "1" && ! -f "$SETUP_MARKER" ]]; then
       exec "$ROOT/scripts/setup_wizard.sh"
     fi
@@ -514,6 +509,11 @@ case "$cmd" in
     shift || true
     ensure_base_deps
     run_root python3 ./scripts/security_pipeline.py "$@"
+    ;;
+  pipeline-cloud)
+    shift || true
+    ensure_base_deps
+    run_root python3 ./scripts/pipeline_cloud_prep.py "$@"
     ;;
   observatory)
     shift || true

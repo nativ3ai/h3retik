@@ -86,5 +86,5 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
 fi
 echo ""
 echo "Next:"
-echo "  h3retik up"
-echo "  h3retik"
+echo "  h3retik          # guided setup wizard on first run"
+echo "  # choose runtime: bundled kali / attach existing container / local-only"
