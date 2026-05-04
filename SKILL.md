@@ -33,6 +33,12 @@ When you have access to the repo filesystem, locate these files **within the `h3
 - `docs/` (literate programming + OPEX methodology)
   - `docs/LITERATE_PROGRAMMING.md`
   - `docs/CAPABILITIES.md`
+  - `docs/START_HERE.md`
+  - `docs/TUI_OPERATOR_REFERENCE.md`
+  - `docs/PIPELINES_AND_COMMANDS.md`
+  - `docs/TOOLS_REFERENCE.md`
+  - `docs/LOCAL_LANE_RUNBOOK.md`
+  - `docs/AGENT_ORCHESTRATION_COOKBOOK.md`
 
 If you cannot locate files, ask the operator for the repo path or a copy/paste of the relevant docs.
 
@@ -40,7 +46,7 @@ If you cannot locate files, ask the operator for the repo path or a copy/paste o
 
 - Root launcher: `h3retik`
 - Compose service: `kali`
-- Kali image tag: `h3retik/kali:v0.0.4`
+- Kali image tag default: `h3retik/kali:v0.0.5`
 - Kali container name (default): `h3retik-kali` (`H3RETIK_KALI_CONTAINER` override)
 - Telemetry bus: `telemetry/` (append-only JSONL streams)
 - Artifacts store: `artifacts/` (files referenced by loot/evidence)
@@ -48,6 +54,60 @@ If you cannot locate files, ask the operator for the repo path or a copy/paste o
 Repo docs (relative to repo root):
 - Literate architecture + operator model: `docs/LITERATE_PROGRAMMING.md`
 - Capability matrix + mounted suite: `docs/CAPABILITIES.md`
+- Full operator + command references:
+  - `docs/START_HERE.md`
+  - `docs/TUI_OPERATOR_REFERENCE.md`
+  - `docs/PIPELINES_AND_COMMANDS.md`
+  - `docs/TOOLS_REFERENCE.md`
+  - `docs/LOCAL_LANE_RUNBOOK.md`
+  - `docs/AGENT_ORCHESTRATION_COOKBOOK.md`
+
+## Full CLI Surface (Canonical)
+
+Use `h3retik help` as source-of-truth. Current command surface:
+
+- `h3retik` (default: start runtime + launch TUI)
+- `h3retik tui`
+- `h3retik attach`
+- `h3retik up`
+- `h3retik down`
+- `h3retik build`
+- `h3retik build-kali`
+- `h3retik shell`
+- `h3retik kali <cmd...>`
+- `h3retik local <stack-check|privesc|binary|package|internal> [args...]`
+- `h3retik coop [backend] <subcmd>`
+- `h3retik target <args...>`
+- `h3retik pipeline <args...>`
+- `h3retik pipeline-cloud <args...>`
+- `h3retik observatory <args...>`
+- `h3retik import-runs <path> [--all]`
+- `h3retik tools list`
+- `h3retik tools install <bundle|tool1,tool2,...> [--strict]`
+- `h3retik modules add-local-tool --name NAME --cmd CMD [--category CAT] [--mode MODE] [--runtime local|kali]`
+- `h3retik modules list`
+- `h3retik modules remove --id user-<name> [--yes]`
+- `h3retik setup`
+- `h3retik reset`
+- `h3retik doctor`
+- `h3retik update`
+- `h3retik install`
+- `h3retik version`
+- `h3retik help`
+
+Global flags:
+- `--kali-container NAME`
+- `--kali-image TAG`
+- `--skip-up`
+
+Environment overrides:
+- `H3RETIK_KALI_CONTAINER` (default: `h3retik-kali`)
+- `H3RETIK_KALI_IMAGE` (default: `h3retik/kali:v0.0.5`)
+- `H3RETIK_COOP_BACKEND` (default: `caldera`; alt: `wildmesh`)
+- `H3RETIK_SKIP_UP=1` (attach-only / do not compose up)
+- `H3RETIK_RUNTIME_MODE` (`bundled|attach|local`)
+- `H3RETIK_UPDATE_CHECK=0` (disable startup update prompt)
+- `H3RETIK_DOCKER_AUTH_AUTOFIX=0` (disable broken Docker credential-helper auto-heal)
 
 ## Fast Path (Agent Quickstart)
 
