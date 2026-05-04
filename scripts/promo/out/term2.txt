@@ -1,0 +1,6 @@
+[h3retik] FIRE lane :: RECON/FINGERPRINT
+$ h3retik tools install recon-plus,web-adv-plus
+[ok] naabu, httpx, katana, dalfox installed
+$ h3retik --headless --target scanme.nmap.org --pipeline full-chain
+[run] nmap -> httpx -> nuclei -> loot export
+[ok] telemetry persisted

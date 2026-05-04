@@ -1,0 +1,5 @@
+[h3retik cloud]
+POST /h3retik/api/lease/start
+POST /h3retik/api/exec
+POST /h3retik/api/session/status
+[ok] pay-per-job compute + scale-to-zero

@@ -1,0 +1,7 @@
+$ curl -fsSL https://h1dr4.dev/install.sh | bash
+[setup] h3retik setup wizard booting...
+[mode] bundled kali (recommended)
+[profile] web-lite
+[ok] docker + python3 + go checks passed
+[ok] kali image ready
+$ h3retik
