@@ -1,4 +1,4 @@
-# Literate Programming Guide — h3retik v0.0.4
+# Literate Programming Guide — h3retik v0.0.6
 
 This document is written as an executable narrative: every capability maps to concrete files and commands.
 
@@ -77,12 +77,12 @@ This is the canonical source for OPS/PWNED/LOOT/MAP rendering.
 5. Explore relationships and access paths in MAP
 6. Iterate with OPSEC-aware next actions
 
-## 5. Release v0.0.4 Contract
+## 5. Release Contract (v0.0.6 line)
 
-v0.0.4 guarantees:
+Current guarantees:
 
 - single global command (`h3retik`)
-- preconfigured Kali image tag (`h3retik/kali:v0.0.4`)
+- preconfigured Kali image tag (`h3retik/kali:v0.0.5`)
 - agent skill profile (`SKILL.md`)
 - documented capabilities (`docs/CAPABILITIES.md`)
 
@@ -96,7 +96,7 @@ h3retik doctor
 h3retik
 ```
 
-## 7. Next SOTA Milestones (post v0.0.4)
+## 7. Next SOTA Milestones
 
 - multi-operator shared ops space (presence, role separation, conflict controls)
 - blue-team co-observation panel with remediation proposals

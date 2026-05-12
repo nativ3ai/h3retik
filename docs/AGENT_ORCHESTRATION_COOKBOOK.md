@@ -1,6 +1,6 @@
 # Agent Orchestration Cookbook
 
-This is the practical guide for running `h3retik` through autonomous/assistant agents.
+This is the practical guide for running `h3retik` through autonomous/assistant agents with telemetry-first execution.
 
 ## Core protocol (always)
 
@@ -13,6 +13,11 @@ This is the practical guide for running `h3retik` through autonomous/assistant a
 Cloud route for agents:
 - `https://h1dr4.dev/h3retik/skills/h3retik-agent.md`
 - `https://h1dr4.dev/h3retik/api`
+
+Session routing flags (use when needed):
+
+- `h3retik --startup-menu` forces campaign chooser.
+- `h3retik --local-telemetry` scopes telemetry to current directory.
 
 ## Minimal reporting format
 
@@ -38,7 +43,7 @@ Pipeline portability to cloud:
 h3retik pipeline-cloud --target http://127.0.0.1:3000 --pipeline full-chain
 ```
 
-Use `suggested_cloud_job_cmd` as cloud `args.cmd`.
+Use `suggested_cloud_job_cmd` as cloud `args.cmd` payload.
 
 Local lane:
 

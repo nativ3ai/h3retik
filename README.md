@@ -1,4 +1,4 @@
-# h3retik v0.0.5
+# h3retik v0.0.6
 
 SOTA red teaming operations cockpit: headless Kali execution, gamified operator UX, and evidence-first telemetry.
 
@@ -186,6 +186,8 @@ ln -sf "$(pwd)/SKILL.md" ~/.codex/skills/h3retik/SKILL.md
 
 ```bash
 h3retik                          # start kali + launch TUI
+h3retik --startup-menu           # force startup campaign menu in TUI
+h3retik --local-telemetry        # use current directory as telemetry root
 h3retik init                     # guided modular install profile
 h3retik setup                    # guided first-run setup (runtime mode, deps, optional bundles)
 h3retik attach                   # attach TUI to existing running kali container (no compose up)
@@ -388,7 +390,7 @@ This keeps TUI state and headless execution synchronized, replayable, and export
 
 ## Operational Model (h3retik vs typical red-team TUI)
 
-| Dimension | Typical toolchains | h3retik v0.0.5 |
+| Dimension | Typical toolchains | h3retik v0.0.6 |
 |---|---|---|
 | Execution model | Mixed terminals and ad hoc scripts | Unified headless CLI bus (`kali` + `local`) |
 | Evidence model | Scattered outputs | Structured telemetry (`commands/findings/loot/exploits`) |
@@ -422,6 +424,6 @@ h3retik
 
 ## Security Reporting
 
-- Supported release line: `v0.0.5` (latest tagged release on `main`).
+- Supported runtime line: `v0.0.6` (active `main` install line).
 - Report vulnerabilities privately through GitHub Security Advisories (preferred) or direct maintainer contact.
 - Do not publish exploitable details in public issues before coordinated disclosure.

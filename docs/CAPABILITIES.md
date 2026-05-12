@@ -1,4 +1,4 @@
-# h3retik Capability Matrix (v0.0.4)
+# h3retik Capability Matrix (v0.0.6)
 
 This matrix documents the mounted suite and how each class is exposed in h3retik.
 
@@ -6,7 +6,7 @@ This matrix documents the mounted suite and how each class is exposed in h3retik
 
 - Kali container: `${H3RETIK_KALI_CONTAINER:-h3retik-kali}`
 - Compose service: `kali`
-- Image tag: `${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.4}`
+- Image tag: `${H3RETIK_KALI_IMAGE:-h3retik/kali:v0.0.5}`
 - Persistent mounts:
   - `/telemetry` (host `telemetry/`)
   - `/artifacts` (host `artifacts/`)
