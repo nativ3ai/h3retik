@@ -1,4 +1,4 @@
-# Literate Programming Guide — h3retik v0.0.6
+# Literate Programming Guide — h3retik v0.0.7
 
 This document is written as an executable narrative: every capability maps to concrete files and commands.
 
@@ -77,7 +77,7 @@ This is the canonical source for OPS/PWNED/LOOT/MAP rendering.
 5. Explore relationships and access paths in MAP
 6. Iterate with OPSEC-aware next actions
 
-## 5. Release Contract (v0.0.6 line)
+## 5. Release Contract (v0.0.7 line)
 
 Current guarantees:
 

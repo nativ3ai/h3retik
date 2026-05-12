@@ -1,4 +1,4 @@
-# h3retik v0.0.6
+# h3retik v0.0.7
 
 SOTA red teaming operations cockpit: headless Kali execution, gamified operator UX, and evidence-first telemetry.
 
@@ -390,7 +390,7 @@ This keeps TUI state and headless execution synchronized, replayable, and export
 
 ## Operational Model (h3retik vs typical red-team TUI)
 
-| Dimension | Typical toolchains | h3retik v0.0.6 |
+| Dimension | Typical toolchains | h3retik v0.0.7 |
 |---|---|---|
 | Execution model | Mixed terminals and ad hoc scripts | Unified headless CLI bus (`kali` + `local`) |
 | Evidence model | Scattered outputs | Structured telemetry (`commands/findings/loot/exploits`) |
@@ -424,6 +424,6 @@ h3retik
 
 ## Security Reporting
 
-- Supported runtime line: `v0.0.6` (active `main` install line).
+- Supported runtime line: `v0.0.7` (active `main` install line).
 - Report vulnerabilities privately through GitHub Security Advisories (preferred) or direct maintainer contact.
 - Do not publish exploitable details in public issues before coordinated disclosure.

@@ -1,4 +1,4 @@
-# h3retik Capability Matrix (v0.0.6)
+# h3retik Capability Matrix (v0.0.7)
 
 This matrix documents the mounted suite and how each class is exposed in h3retik.
 
