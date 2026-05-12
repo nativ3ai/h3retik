@@ -31,6 +31,88 @@ run_root() {
   (cd "$ROOT" && "$@")
 }
 
+append_cli_command_telemetry() {
+  local phase="${1:-exploit}"
+  local tool="${2:-cli}"
+  local cmd_text="${3:-}"
+  local status="${4:-completed}"
+  local exit_code="${5:-0}"
+  local duration_ms="${6:-0}"
+  local output_preview="${7:-}"
+  local telemetry_path="$ROOT/telemetry/commands.jsonl"
+  mkdir -p "$ROOT/telemetry"
+  local preview_file
+  preview_file="$(mktemp)"
+  printf '%s' "$output_preview" > "$preview_file"
+  H3RETIK_TELEMETRY_PATH="$telemetry_path" \
+  H3RETIK_PHASE="$phase" \
+  H3RETIK_TOOL="$tool" \
+  H3RETIK_COMMAND="$cmd_text" \
+  H3RETIK_STATUS="$status" \
+  H3RETIK_EXIT_CODE="$exit_code" \
+  H3RETIK_DURATION_MS="$duration_ms" \
+  H3RETIK_OUTPUT_FILE="$preview_file" \
+  python3 - <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+from datetime import datetime, timezone
+
+path = os.environ["H3RETIK_TELEMETRY_PATH"]
+preview_file = os.environ.get("H3RETIK_OUTPUT_FILE", "")
+preview = ""
+if preview_file:
+    try:
+        with open(preview_file, "r", encoding="utf-8", errors="replace") as f:
+            preview = f.read()
+    except Exception:
+        preview = ""
+entry = {
+    "command_id": f"cli-{int(datetime.now(timezone.utc).timestamp() * 1000)}",
+    "timestamp": datetime.now(timezone.utc).isoformat(),
+    "phase": os.environ.get("H3RETIK_PHASE", "exploit"),
+    "tool": os.environ.get("H3RETIK_TOOL", "cli"),
+    "command": os.environ.get("H3RETIK_COMMAND", ""),
+    "status": os.environ.get("H3RETIK_STATUS", "completed"),
+    "exit_code": int(os.environ.get("H3RETIK_EXIT_CODE", "0") or 0),
+    "duration_ms": int(os.environ.get("H3RETIK_DURATION_MS", "0") or 0),
+    "output_preview": (preview or "")[:1200],
+}
+with open(path, "a", encoding="utf-8") as f:
+    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+PY
+  rm -f "$preview_file"
+}
+
+run_logged_kali_cmd() {
+  local phase="${1:-exploit}"
+  local tool="${2:-kali-cli}"
+  local shell_cmd="${3:-}"
+  [[ -n "$shell_cmd" ]] || return 0
+  local start_ms end_ms duration_ms rc status output
+  start_ms="$(python3 - <<'PY'
+import time
+print(int(time.time() * 1000))
+PY
+)"
+  set +e
+  output="$(docker exec "$KALI_CONTAINER" bash -lc "$shell_cmd" 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$output"
+  end_ms="$(python3 - <<'PY'
+import time
+print(int(time.time() * 1000))
+PY
+)"
+  duration_ms=$((end_ms - start_ms))
+  status="completed"
+  if [[ $rc -ne 0 ]]; then
+    status="failed"
+  fi
+  append_cli_command_telemetry "$phase" "$tool" "docker exec $KALI_CONTAINER bash -lc $shell_cmd" "$status" "$rc" "$duration_ms" "$output"
+  return $rc
+}
+
 ensure_base_deps() {
   command -v python3 >/dev/null 2>&1 || die "python3 is required"
 }
@@ -319,7 +401,7 @@ usage() {
 h3retik v$VERSION
 
 Usage:
-  h3retik [--kali-container NAME] [--kali-image TAG] [--skip-up]
+  h3retik [--kali-container NAME] [--kali-image TAG] [--skip-up] [--startup-menu] [--local-telemetry]
   h3retik                          # start kali + launch TUI
   h3retik tui                      # launch TUI
   h3retik attach                   # launch TUI attached to existing kali container only
@@ -356,8 +438,12 @@ Env overrides:
   H3RETIK_SKIP_UP=1                # skip docker compose up (attach to existing container)
   H3RETIK_RUNTIME_MODE             # bundled|attach|local (default: bundled)
   H3RETIK_UPDATE_CHECK=0           # disable startup update check prompt
+  H3RETIK_FORCE_STARTUP_MENU=1     # force campaign startup menu in TUI
 EOF
 }
+
+FORCE_STARTUP_MENU=0
+LOCAL_TELEMETRY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -377,6 +463,14 @@ while [[ $# -gt 0 ]]; do
       export H3RETIK_SKIP_UP=1
       shift
       ;;
+    --startup-menu)
+      FORCE_STARTUP_MENU=1
+      shift
+      ;;
+    --local-telemetry)
+      LOCAL_TELEMETRY=1
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -393,6 +487,14 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$LOCAL_TELEMETRY" == "1" ]]; then
+  ROOT="$PWD"
+  export H3RETIK_ROOT="$ROOT"
+fi
+if [[ "$FORCE_STARTUP_MENU" == "1" ]]; then
+  export H3RETIK_FORCE_STARTUP_MENU=1
+fi
 
 cmd="${1:-tui}"
 case "$cmd" in
@@ -411,7 +513,10 @@ case "$cmd" in
     if [[ "${H3RETIK_SKIP_UP:-0}" != "1" && "${H3RETIK_RUNTIME_MODE:-bundled}" != "local" ]]; then
       ensure_kali_runtime
     fi
-    exec "$ROOT/bin/juicetui" "$@"
+    if [[ $# -gt 0 ]]; then
+      exec "$ROOT/bin/juicetui" "$@"
+    fi
+    exec "$ROOT/bin/juicetui" "$ROOT"
     ;;
   attach)
     shift || true
@@ -423,7 +528,10 @@ case "$cmd" in
       die "container is not running: $KALI_CONTAINER (start it or run 'h3retik up')"
     fi
     export H3RETIK_SKIP_UP=1
-    exec "$ROOT/bin/juicetui" "$@"
+    if [[ $# -gt 0 ]]; then
+      exec "$ROOT/bin/juicetui" "$@"
+    fi
+    exec "$ROOT/bin/juicetui" "$ROOT"
     ;;
   up)
     ensure_base_deps
@@ -455,7 +563,8 @@ case "$cmd" in
     if [[ $# -eq 0 ]]; then
       exec docker exec -it "$KALI_CONTAINER" bash
     fi
-    exec docker exec "$KALI_CONTAINER" bash -lc "$*"
+    run_logged_kali_cmd "exploit" "kali-cli" "$*"
+    exit $?
     ;;
   local)
     shift || true
@@ -465,22 +574,27 @@ case "$cmd" in
     shift || true
     case "$sub" in
       stack-check)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'local-stack-check'
+        run_logged_kali_cmd "local" "local-cli" "local-stack-check"
+        exit $?
         ;;
       privesc)
         target="${1:-/workspace}"
-        exec docker exec "$KALI_CONTAINER" bash -lc "local-privesc $(printf %q "$target")"
+        run_logged_kali_cmd "local" "local-cli" "local-privesc $(printf %q "$target")"
+        exit $?
         ;;
       binary)
         target="${1:-/workspace}"
-        exec docker exec "$KALI_CONTAINER" bash -lc "local-binary-triage $(printf %q "$target")"
+        run_logged_kali_cmd "local" "local-cli" "local-binary-triage $(printf %q "$target")"
+        exit $?
         ;;
       package)
         target="${1:-/workspace}"
-        exec docker exec "$KALI_CONTAINER" bash -lc "local-package-audit $(printf %q "$target")"
+        run_logged_kali_cmd "local" "local-cli" "local-package-audit $(printf %q "$target")"
+        exit $?
         ;;
       internal)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'local-internal-recon'
+        run_logged_kali_cmd "local" "local-cli" "local-internal-recon"
+        exit $?
         ;;
       *)
         die "unknown local subcommand: $sub (use: stack-check|privesc|binary|package|internal)"
@@ -505,25 +619,31 @@ case "$cmd" in
     if [[ "$backend" == "caldera" ]]; then
       case "$sub" in
         check)
-          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-check'
+          run_logged_kali_cmd "coop" "coop-cli" "coop-caldera-check"
+          exit $?
           ;;
         up)
-          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-up'
+          run_logged_kali_cmd "coop" "coop-cli" "coop-caldera-up"
+          exit $?
           ;;
         status)
-          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-status'
+          run_logged_kali_cmd "coop" "coop-cli" "coop-caldera-status"
+          exit $?
           ;;
         stop)
-          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-stop'
+          run_logged_kali_cmd "coop" "coop-cli" "coop-caldera-stop"
+          exit $?
           ;;
         api)
           path="${1:-/api/operations}"
           method="${2:-GET}"
           body="${3:-}"
-          exec docker exec "$KALI_CONTAINER" bash -lc "coop-caldera-api $(printf %q "$path") $(printf %q "$method") $(printf %q "$body")"
+          run_logged_kali_cmd "coop" "coop-cli" "coop-caldera-api $(printf %q "$path") $(printf %q "$method") $(printf %q "$body")"
+          exit $?
           ;;
         report)
-          exec docker exec "$KALI_CONTAINER" bash -lc 'coop-caldera-op-report'
+          run_logged_kali_cmd "coop" "coop-cli" "coop-caldera-op-report"
+          exit $?
           ;;
         *)
           die "unknown caldera coop subcommand: $sub (use: check|up|status|stop|api|report)"
@@ -532,33 +652,42 @@ case "$cmd" in
     fi
     case "$sub" in
       check)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-check'
+        run_logged_kali_cmd "coop" "coop-cli" "coop-wildmesh-check"
+        exit $?
         ;;
       setup)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-setup'
+        run_logged_kali_cmd "coop" "coop-cli" "coop-wildmesh-setup"
+        exit $?
         ;;
       up)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-up'
+        run_logged_kali_cmd "coop" "coop-cli" "coop-wildmesh-up"
+        exit $?
         ;;
       status)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-status'
+        run_logged_kali_cmd "coop" "coop-cli" "coop-wildmesh-status"
+        exit $?
         ;;
       discover)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-discover'
+        run_logged_kali_cmd "coop" "coop-cli" "coop-wildmesh-discover"
+        exit $?
         ;;
       policy)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-policy-check'
+        run_logged_kali_cmd "coop" "coop-cli" "coop-wildmesh-policy-check"
+        exit $?
         ;;
       sync)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-sync-report'
+        run_logged_kali_cmd "coop" "coop-cli" "coop-wildmesh-sync-report"
+        exit $?
         ;;
       automate)
         mode="${1:-once}"
         interval="${2:-120}"
-        exec docker exec "$KALI_CONTAINER" bash -lc "coop-wildmesh-automation $(printf %q "$mode") $(printf %q "$interval")"
+        run_logged_kali_cmd "coop" "coop-cli" "coop-wildmesh-automation $(printf %q "$mode") $(printf %q "$interval")"
+        exit $?
         ;;
       stop)
-        exec docker exec "$KALI_CONTAINER" bash -lc 'coop-wildmesh-stop'
+        run_logged_kali_cmd "coop" "coop-cli" "coop-wildmesh-stop"
+        exit $?
         ;;
       *)
         die "unknown wildmesh coop subcommand: $sub (use: check|setup|up|status|discover|policy|sync|automate|stop)"

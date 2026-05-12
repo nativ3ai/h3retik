@@ -465,12 +465,14 @@ type lootFogStage struct {
 }
 
 var lootFogStages = []lootFogStage{
-	{Key: "recon", Title: "Frontal Surface Recon", Description: "Map exposed services and request paths with low-noise discovery.", Group: "Recon", Requires: nil},
-	{Key: "surface", Title: "Orbital Surface Expansion", Description: "Expand endpoint and technology surface to build exploit hypotheses.", Group: "Surface", Requires: []string{"recon"}},
-	{Key: "breach", Title: "Maxillary Breach Path", Description: "Attempt entry vectors and validate initial compromise paths.", Group: "Exploit", Requires: []string{"recon"}},
-	{Key: "access", Title: "Infraorbital Access Chain", Description: "Validate auth paths and establish reusable access footholds.", Group: "Access", Requires: []string{"breach"}},
-	{Key: "objective", Title: "Mandibular Objective Control", Description: "Escalate, tamper, and complete objective-grade access.", Group: "Objective", Requires: []string{"access", "tamper"}},
+	{Key: "recon", Title: "Recon", Description: "Map exposed services, routes, and basic request behavior from telemetry.", Group: "Recon", Requires: nil},
+	{Key: "surface", Title: "Surface", Description: "Expand endpoint and technology coverage to build concrete attack paths.", Group: "Surface", Requires: []string{"recon"}},
+	{Key: "breach", Title: "Breach", Description: "Validate entry vectors and confirm first compromise foothold.", Group: "Exploit", Requires: []string{"recon"}},
+	{Key: "access", Title: "Access", Description: "Validate auth/token paths and establish reusable access footholds.", Group: "Access", Requires: []string{"breach"}},
+	{Key: "objective", Title: "Objective", Description: "Escalate impact, tamper controls, and complete objective-grade actions.", Group: "Objective", Requires: []string{"access", "tamper"}},
 }
+
+var lootFogVisualOrder = []string{"recon", "surface", "breach", "access", "objective"}
 
 type model struct {
 	width                   int
@@ -727,7 +729,16 @@ func (m model) Init() tea.Cmd {
 }
 
 func shouldShowStartupCampaignMenu(root, telemetryDir string) bool {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("H3RETIK_FORCE_STARTUP_MENU")), "1") {
+		return true
+	}
 	if looksLikeTelemetryDir(root) && !strings.EqualFold(filepath.Base(root), "telemetry") {
+		return false
+	}
+	// If a live target is already configured, enter cockpit directly even when
+	// streams are empty. This keeps global telemetry targets reusable across repos.
+	state := loadState(filepath.Join(telemetryDir, "state.json"))
+	if strings.TrimSpace(state.TargetURL) != "" {
 		return false
 	}
 	for _, name := range []string{"commands.jsonl", "findings.jsonl", "loot.jsonl", "exploits.jsonl"} {
@@ -747,7 +758,7 @@ func startupCmd(root, op string) tea.Cmd {
 	return func() tea.Msg {
 		switch strings.ToLower(strings.TrimSpace(op)) {
 		case "new-campaign":
-			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "python3", "./scripts/telemetryctl.py", "new-campaign")
 			cmd.Dir = root
@@ -755,7 +766,7 @@ func startupCmd(root, op string) tea.Cmd {
 			if ctx.Err() == context.DeadlineExceeded {
 				return startupResultMsg{
 					Op:     op,
-					Err:    fmt.Errorf("new campaign timed out after 45s"),
+					Err:    fmt.Errorf("new campaign timed out after 180s"),
 					Output: string(out),
 				}
 			}
@@ -1719,7 +1730,7 @@ func (m *model) moveArchGraph(direction string) {
 func (m model) currentArchMapScope() string {
 	scope := strings.ToLower(strings.TrimSpace(m.fireMode))
 	switch scope {
-	case "exploit", "onchain":
+	case "exploit", "onchain", "local":
 		return scope
 	default:
 		return ""
@@ -1748,6 +1759,8 @@ func (m model) selectedArchGraphNodes() []attackGraphNode {
 	switch m.currentArchMapScope() {
 	case "onchain":
 		return m.onchainGraphNodes()
+	case "local":
+		return m.localGraphNodes()
 	default:
 		return m.exploitGraphNodes()
 	}
@@ -1779,6 +1792,13 @@ func (m model) exploitGraphNodes() []attackGraphNode {
 		}
 	}
 	return nodes
+}
+
+func (m model) localGraphNodes() []attackGraphNode {
+	localCommands := commandsByMode(m.commands, "local")
+	localFindings := findingsByMode(m.findings, "local")
+	localLoot := lootByMode(m.loot, "local")
+	return buildLocalAttackGraph(m.state, m.root, localCommands, localFindings, localLoot)
 }
 
 type onchainSnapshotArtifact struct {
@@ -2208,6 +2228,9 @@ func (m model) archGraphActionsForNode(node attackGraphNode) []controlAction {
 	if strings.EqualFold(m.currentArchMapScope(), "onchain") {
 		return m.onchainGraphNodeActions(node)
 	}
+	if strings.EqualFold(m.currentArchMapScope(), "local") {
+		return m.localGraphNodeActions(node)
+	}
 	exploitLoot := lootByMode(m.loot, "exploit")
 	actions := exploitGraphNodeActions(node, m.state, exploitLoot, m.root)
 	if fitAction, ok := m.archCredentialFitScanAction(node); ok {
@@ -2221,6 +2244,52 @@ func (m model) archGraphActionsForNode(node attackGraphNode) []controlAction {
 		}
 	}
 	return actions
+}
+
+func containsAllFold(hay string, needles ...string) bool {
+	h := strings.ToLower(strings.TrimSpace(hay))
+	for _, needle := range needles {
+		if !strings.Contains(h, strings.ToLower(strings.TrimSpace(needle))) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m model) localGraphNodeActions(node attackGraphNode) []controlAction {
+	all := m.localFireActions()
+	if len(all) == 0 {
+		return nil
+	}
+	pick := func(match func(controlAction) bool) []controlAction {
+		out := make([]controlAction, 0, 3)
+		for _, action := range all {
+			if !match(action) {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(action.Mode), "internal") || strings.TrimSpace(action.Command) != "" || strings.TrimSpace(action.KaliShell) != "" {
+				out = append(out, action)
+			}
+		}
+		return out
+	}
+	meta := strings.ToLower(strings.TrimSpace(node.ID + " " + node.Kind + " " + node.Label + " " + node.Detail))
+	switch {
+	case strings.Contains(meta, "target"):
+		return pick(func(a controlAction) bool { return containsAllFold(a.Label, "set", "target") || containsAllFold(a.Label, "stack", "check") })
+	case strings.Contains(meta, "privesc"):
+		return pick(func(a controlAction) bool { return containsAllFold(a.Label, "privesc") || containsAllFold(a.Group, "privilege") })
+	case strings.Contains(meta, "binary"):
+		return pick(func(a controlAction) bool { return containsAllFold(a.Label, "binary") || containsAllFold(a.Group, "binary") })
+	case strings.Contains(meta, "code"), strings.Contains(meta, "package"):
+		return pick(func(a controlAction) bool { return containsAllFold(a.Label, "package") || containsAllFold(a.Group, "code") })
+	case strings.Contains(meta, "internal"), strings.Contains(meta, "recon"):
+		return pick(func(a controlAction) bool { return containsAllFold(a.Label, "internal", "recon") || containsAllFold(a.Group, "recon") })
+	case strings.Contains(meta, "artifact"), strings.Contains(meta, "folder"), strings.Contains(meta, "file"):
+		return pick(func(a controlAction) bool { return containsAllFold(a.Label, "artifact", "index") || containsAllFold(a.Label, "package") || containsAllFold(a.Label, "binary") })
+	default:
+		return pick(func(a controlAction) bool { return containsAllFold(a.Label, "stack", "check") || containsAllFold(a.Label, "artifact", "index") })
+	}
 }
 
 func buildCredentialFitScanShell(endpoints []string, token, user, pass string) string {
@@ -3966,9 +4035,12 @@ func (m model) overviewView() string {
 	scopedCommands := commandsByMode(m.commands, mode)
 	scopedFindings := findingsByMode(m.findings, mode)
 	scopedLoot := lootByMode(m.loot, mode)
-	if (strings.EqualFold(mode, "exploit") || strings.EqualFold(mode, "onchain")) && m.archMapMode {
+	if (strings.EqualFold(mode, "exploit") || strings.EqualFold(mode, "onchain") || strings.EqualFold(mode, "local")) && m.archMapMode {
 		if strings.EqualFold(mode, "onchain") {
 			return m.onchainArchMapView(leftWidth, rightWidth, scopedCommands, scopedFindings, scopedLoot)
+		}
+		if strings.EqualFold(mode, "local") {
+			return m.localArchMapView(leftWidth, rightWidth, scopedCommands, scopedFindings, scopedLoot)
 		}
 		return m.exploitArchMapView(leftWidth, rightWidth, scopedCommands, scopedFindings, scopedLoot)
 	}
@@ -4234,6 +4306,64 @@ func (m model) onchainArchMapView(leftWidth, rightWidth int, commands []commandE
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		pane("[ARCH] LIVE MAP :: ONCHAIN TREE", strings.Join(leftLines, "\n"), leftWidth, m.height-6),
+		paneScrolled("[ARCH] MAP DETAIL", strings.Join(rightLines, "\n"), rightWidth, m.height-6, m.commandDetailScroll),
+	)
+}
+
+func (m model) localArchMapView(leftWidth, rightWidth int, commands []commandEntry, findings []findingEntry, loot []lootEntry) string {
+	nodes := m.localGraphNodes()
+	edges := buildExploitAttackEdges(m.state, commands, findings, nodes)
+	selected := 0
+	if len(nodes) > 0 {
+		selected = clampWrap(m.archGraphIdx, len(nodes))
+	}
+	leftLines := []string{
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("live local telemetry tree"),
+		renderExploitAttackGraphASCII(nodes, edges, selected, leftWidth-4, m.archCollapsed),
+	}
+	rightLines := []string{
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("local node detail"),
+		"no local graph node selected",
+	}
+	if len(nodes) > 0 {
+		rightLines[1] = m.renderExploitGraphNodeDetail(nodes[selected], edges, m.archGraphActionIdx, rightWidth-4)
+	}
+	selectedActionLabel := "none"
+	selectedRole := "EXPLORE"
+	selectedRoleDesc := graphRoleDescription(selectedRole)
+	if len(nodes) > 0 {
+		actions := m.archGraphActionsForNode(nodes[selected])
+		if len(actions) > 0 {
+			action := actions[clampWrap(m.archGraphActionIdx, len(actions))]
+			selectedActionLabel = truncate(action.Label, 56)
+			selectedRole = graphActionRole(action)
+			selectedRoleDesc = graphRoleDescription(selectedRole)
+		}
+	}
+	rightLines = append(rightLines,
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("mission hud"),
+		metricLine("scope", "LOCAL FILE/REPO OPERATOR"),
+		metricLine("target", truncate(valueOr(strings.TrimSpace(m.manualTargetInput), m.root), max(20, rightWidth-14))),
+		metricLine("next", truncate(valueOr(m.runState.NextBest, "run local-package-audit and local-privesc"), max(20, rightWidth-12))),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("node actions"),
+		metricLine("nav", "↑/↓ tree  ←/→ hierarchy  h/l collapse-expand"),
+		metricLine("select", "1..9 quick-select action  ,/. cycle action"),
+		metricLine("trigger", "Enter preview/checks  f execute"),
+		metricLine("selected action", selectedActionLabel),
+		metricLine("selected role", selectedRole+" "+graphRoleBadge(selectedRole)),
+		metricLine("role detail", selectedRoleDesc),
+		metricLine("status", valueOr(m.archGraphStatus, ternary(m.archGraphBusy, "running", "idle"))+" "+taxonomyAnimation(m.archGraphOutcome, m.archGraphBusy, m.archGraphUntil)),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("last map command output"),
+		renderStructuredCommandOutput(valueOr(strings.TrimSpace(m.archGraphOutput), "no local map command output yet"), rightWidth-4, m.archOutputRaw),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("tip: category lanes are telemetry-driven; file/folder nodes come from discovered local artifacts"),
+	)
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		pane("[ARCH] LIVE MAP :: LOCAL TREE", strings.Join(leftLines, "\n"), leftWidth, m.height-6),
 		paneScrolled("[ARCH] MAP DETAIL", strings.Join(rightLines, "\n"), rightWidth, m.height-6, m.commandDetailScroll),
 	)
 }
@@ -4619,34 +4749,12 @@ func (m model) selectedLootFogStage() lootFogStage {
 }
 
 func (m model) lootFogStagesLive() []lootFogStage {
-	added := map[string]bool{}
-	out := []lootFogStage{}
-	add := func(key string) {
+	out := make([]lootFogStage, 0, len(lootFogVisualOrder))
+	for _, key := range lootFogVisualOrder {
 		stage := lootFogStageByKey(key)
-		k := strings.ToLower(strings.TrimSpace(stage.Key))
-		if k == "" || added[k] {
-			return
+		if strings.TrimSpace(stage.Key) != "" {
+			out = append(out, stage)
 		}
-		added[k] = true
-		out = append(out, stage)
-	}
-	state := func(key string) string {
-		return strings.ToUpper(strings.TrimSpace(m.runState.NodeStates[key].State))
-	}
-	if state("surface") != "" || m.fogUnlockByKey("surface-map") || hasCommandMatch(commandsByMode(m.commands, "exploit"), "surface") {
-		add("surface")
-	}
-	if state("recon") != "" || hasCommandMatch(commandsByMode(m.commands, "exploit"), "recon") {
-		add("recon")
-	}
-	if state("breach") != "" || hasFindingMatch(findingsByMode(m.findings, "exploit"), "vuln") || hasCommandMatch(commandsByMode(m.commands, "exploit"), "exploit") {
-		add("breach")
-	}
-	if state("auth") != "" || m.fogUnlockByKey("auth-pivot") || hasLootMatch(lootByMode(m.loot, "exploit"), "credential") || hasLootMatch(lootByMode(m.loot, "exploit"), "token") {
-		add("access")
-	}
-	if state("impact") != "" || m.fogUnlockByKey("objective-control") || hasLootMatch(lootByMode(m.loot, "exploit"), "flag") {
-		add("objective")
 	}
 	return out
 }
@@ -4691,25 +4799,41 @@ func colorStageLabel(label, state string, selected bool) string {
 }
 
 func renderLootFogSkull(snap chainSnapshot, selected string) string {
-	stages := []lootFogStage{
-		lootFogStageByKey("surface"),
-		lootFogStageByKey("recon"),
-		lootFogStageByKey("breach"),
-		lootFogStageByKey("access"),
-		lootFogStageByKey("objective"),
-	}
-	lines := []string{"live fog telemetry"}
-	for _, stage := range stages {
-		if strings.TrimSpace(stage.Key) == "" {
-			continue
-		}
-		prefix := "  "
-		if strings.EqualFold(stage.Key, selected) {
-			prefix = "▸ "
-		}
-		lines = append(lines, fmt.Sprintf("%s%s [%s]", prefix, strings.ToUpper(stage.Key), stageStateTag(stage, snap)))
-	}
-	return strings.Join(lines, "\n")
+	frontalStage := lootFogStageByKey("recon")
+	orbitalStage := lootFogStageByKey("surface")
+	maxillaryStage := lootFogStageByKey("breach")
+	infraStage := lootFogStageByKey("access")
+	mandibleStage := lootFogStageByKey("objective")
+	orbit := colorStageLabel("Surface", stageStateTag(orbitalStage, snap), strings.EqualFold(selected, "surface"))
+	frontal := colorStageLabel("Recon", stageStateTag(frontalStage, snap), strings.EqualFold(selected, "recon"))
+	maxillary := colorStageLabel("Breach", stageStateTag(maxillaryStage, snap), strings.EqualFold(selected, "breach"))
+	infra := colorStageLabel("Access", stageStateTag(infraStage, snap), strings.EqualFold(selected, "access"))
+	mandible := colorStageLabel("Objective", stageStateTag(mandibleStage, snap), strings.EqualFold(selected, "objective"))
+	return strings.Join([]string{
+		"              ___           _,.---,---.,_",
+		"              |         ,;~'             '~;,",
+		"              |       ,;                     ;,",
+		"     " + frontal + "  |      ;                         ; ,--- " + orbit,
+		"              |     ,'                         /'",
+		"              |    ,;                        /' ;,",
+		"              |    ; ;      .           . <-'  ; |",
+		"              |__  | ;   ______       ______   ;",
+		"             ___   |  '/~\"     ~\" . \"~     \"~\\'  |",
+		"             |     |  ~  ,-~~~^~, | ,~^~~~-,  ~  |",
+		"    " + maxillary + "  |      |   |        }:{        |",
+		"             |      |   l       / | \\       !   |",
+		"             |      .~  (__,.--\" .^. \"--.,__)  ~.",
+		"             |      |    ----;' / | \\ `;-<--------- " + infra,
+		"             |__     \\__.       \\/^\\/       .__/",
+		"                ___   V| \\                 / |V",
+		"                |      | |T~\\___!___!___/~T| |",
+		"                |      | |`IIII_I_I_I_IIII'| |",
+		"                |      |  \\,III I I I III,/  |",
+		"    " + mandible + " |       \\   `~~~~~~~~~~'    /",
+		"                |         \\   .       .",
+		"                |__         \\.    ^    ./",
+		"                              ^~~~^~~~^",
+	}, "\n")
 }
 
 type fogStageActionItem struct {
@@ -6641,16 +6765,17 @@ func toolHeatmap(commands []commandEntry, width int) string {
 func endpointMap(findings []findingEntry, loot []lootEntry, width int) string {
 	type endpointState struct {
 		label  string
+		conf   string
 		status string
 	}
 	byEndpoint := map[string]endpointState{}
-	add := func(endpoint, label, status string) {
+	add := func(endpoint, label, conf, status string) {
 		if strings.TrimSpace(endpoint) == "" {
 			return
 		}
 		current, ok := byEndpoint[endpoint]
 		if !ok || endpointPriority(status) > endpointPriority(current.status) {
-			byEndpoint[endpoint] = endpointState{label: label, status: status}
+			byEndpoint[endpoint] = endpointState{label: label, conf: conf, status: status}
 		}
 	}
 	for _, f := range findings {
@@ -6658,10 +6783,12 @@ func endpointMap(findings []findingEntry, loot []lootEntry, width int) string {
 		if strings.Contains(strings.ToLower(f.Impact), "exfil") || strings.Contains(strings.ToLower(f.Impact), "compromise") {
 			label = "ABUSED"
 		}
-		add(f.Endpoint, classifyEndpoint(f.Endpoint), label)
+		cat, conf := classifyEndpointWithConfidence(f.Endpoint)
+		add(f.Endpoint, cat, conf, label)
 	}
 	for _, item := range loot {
-		add(item.Source, classifyEndpoint(item.Source), "EXFIL")
+		cat, conf := classifyEndpointWithConfidence(item.Source)
+		add(item.Source, cat, conf, "EXFIL")
 	}
 	if len(byEndpoint) == 0 {
 		return "no endpoints inferred yet"
@@ -6677,7 +6804,11 @@ func endpointMap(findings []findingEntry, loot []lootEntry, width int) string {
 			break
 		}
 		v := byEndpoint[k]
-		lines = append(lines, fmt.Sprintf("%s %s %s", endpointBadge(v.status), typeBadge(v.label), truncate(k, max(18, width-16))))
+		conf := strings.ToUpper(strings.TrimSpace(v.conf))
+		if conf == "" {
+			conf = "UNK"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s[%s] %s", endpointBadge(v.status), typeBadge(v.label), conf, truncate(k, max(18, width-21))))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -9667,6 +9798,22 @@ func exploitInnerTargets(commands []commandEntry, findings []findingEntry, loot 
 	}
 	base = strings.TrimRight(base, "/")
 	seen := map[string]bool{}
+	looksLikeRouteSource := func(raw string) bool {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return false
+		}
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+			return true
+		}
+		// Route-like relative path.
+		if strings.HasPrefix(trimmed, "/") {
+			return true
+		}
+		// Bare labels like "commix-auto" / "chain-privesc" are not endpoints.
+		return false
+	}
 	add := func(raw string) {
 		normalized := strings.TrimSpace(normalizeLootEndpoint(base, raw))
 		if normalized == "" {
@@ -9687,6 +9834,9 @@ func exploitInnerTargets(commands []commandEntry, findings []findingEntry, loot 
 	}
 	for _, item := range loot {
 		if strings.EqualFold(strings.TrimSpace(item.Kind), "path") || strings.EqualFold(strings.TrimSpace(item.Kind), "endpoint") {
+			if !looksLikeRouteSource(item.Source) {
+				continue
+			}
 			add(item.Source)
 		}
 	}
@@ -9712,7 +9862,6 @@ func endpointTelemetryLabel(endpoint string) string {
 	if path == "" {
 		return "ENDPOINT"
 	}
-	lower := strings.ToLower(path)
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	last := ""
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -9722,16 +9871,24 @@ func endpointTelemetryLabel(endpoint string) string {
 			break
 		}
 	}
-	switch {
-	case strings.Contains(lower, "/auth"), strings.Contains(lower, "/login"), strings.Contains(lower, "/oauth"):
-		return "AUTH " + strings.ToUpper(truncate(last, 18))
-	case strings.Contains(lower, "/admin"), strings.Contains(lower, "/manage"), strings.Contains(lower, "/console"):
-		return "ADMIN " + strings.ToUpper(truncate(last, 18))
-	case strings.Contains(lower, "/api/"), strings.Contains(lower, "/rest/"):
-		return "API " + strings.ToUpper(truncate(last, 18))
-	default:
-		return "PATH " + strings.ToUpper(truncate(last, 18))
+	cat, conf := classifyEndpointWithConfidence(trimmed)
+	prefix := "PATH"
+	switch cat {
+	case "GRAPHQL":
+		prefix = "GQL"
+	case "UPLOAD":
+		prefix = "UPLD"
+	case "ASSET":
+		prefix = "ASSET"
+	case "TOKEN":
+		prefix = "TOKEN"
+	case "AUTH", "ADMIN", "API", "FTP", "WEB":
+		prefix = cat
 	}
+	if strings.TrimSpace(last) == "" {
+		return prefix + "[" + strings.ToUpper(conf) + "] ROOT"
+	}
+	return prefix + "[" + strings.ToUpper(conf) + "] " + strings.ToUpper(truncate(last, 18))
 }
 
 func bruteCredentialSources() []string {
@@ -9970,29 +10127,80 @@ func buildExploitAttackGraph(state stateFile, commands []commandEntry, findings 
 	s := deriveChainSnapshot(commands, findings, loot)
 	target := valueOr(targetHostFromURL(state.TargetURL), "target")
 	collections := extractCollectionRecords(loot, state.TargetURL)
-	authPwned := s.Breach || s.Access || hasLootMatch(loot, "token") || hasLootMatch(loot, "credential") || hasLootMatch(loot, "jwt")
-	apiPwned := hasFindingMatch(findings, "api") || hasLootMatch(loot, "/api/") || hasLootMatch(loot, "endpoint")
 	dbPwned := hasLootMatch(loot, "database") || hasLootMatch(loot, "mysql") || hasLootMatch(loot, "postgres") || hasLootMatch(loot, ".db")
 	filesPwned := hasLootMatch(loot, "backup") || hasLootMatch(loot, "artifact") || hasLootMatch(loot, "binary") || hasLootMatch(loot, "document") || hasLootMatch(loot, "path")
 	impactPwned := s.Tamper || s.Exfil || len(collections) > 0 || hasLootMatch(loot, "flag")
-	objectivePwned := hasLootMatch(loot, "flag") || impactPwned
 	nodes := []attackGraphNode{
-		{ID: "target", Parent: "", Kind: "cluster", Label: "TARGET " + target, Depth: 0, Pwned: s.Recon || authPwned || apiPwned, Opsec: 20, Detail: "Entry node for current engagement scope."},
-		{ID: "surface", Parent: "target", Kind: "cluster", Label: "SURFACE MAP", Depth: 1, Pwned: s.Recon, Opsec: 35, Detail: "Endpoints, services, headers, exposed routes."},
-		{ID: "auth", Parent: "target", Kind: "cluster", Label: "AUTH LANE", Depth: 1, Pwned: authPwned, Opsec: 55, Detail: "Session/JWT/credential abuse and auth-boundary pivots."},
-		{ID: "api", Parent: "auth", Kind: "cluster", Label: "API LANE", Depth: 2, Pwned: apiPwned, Opsec: 60, Detail: "Authenticated API reads/writes and privilege abuse paths."},
+		{ID: "target", Parent: "", Kind: "cluster", Label: "TARGET " + target, Depth: 0, Pwned: false, Opsec: 20, Detail: "Entry node for current engagement scope."},
 	}
-	apiEndpoints := exploitAPIDiscovery(commands, findings, loot, state.TargetURL)
+	authPwned := s.Breach || s.Access || hasLootMatch(loot, "token") || hasLootMatch(loot, "credential") || hasLootMatch(loot, "jwt")
+	baseTarget := strings.TrimRight(strings.TrimSpace(state.TargetURL), "/")
+	discovered := exploitInnerTargets(commands, findings, loot, state.TargetURL)
+	categoryOrder := []string{"AUTH", "TOKEN", "ADMIN", "GRAPHQL", "API", "UPLOAD", "ASSET", "FTP", "WEB"}
+	categoryNodes := map[string]string{}
+	categoryPwned := map[string]bool{}
+	for _, endpoint := range discovered {
+		key := strings.ToLower(strings.TrimSpace(endpoint))
+		if key == "" {
+			continue
+		}
+		if baseTarget != "" && strings.EqualFold(strings.TrimRight(endpoint, "/"), baseTarget) {
+			continue
+		}
+		cat, conf := classifyEndpointWithConfidence(endpoint)
+		if strings.TrimSpace(cat) == "" {
+			cat = "WEB"
+		}
+		if strings.TrimSpace(categoryNodes[cat]) == "" {
+			nodeID := "lane-" + strings.ToLower(cat)
+			detail := "Telemetry category created from discovered endpoints (confidence=" + strings.ToUpper(conf) + ")."
+			if strings.EqualFold(cat, "AUTH") {
+				detail = "Session/JWT/credential abuse and auth-boundary pivots."
+			}
+			nodes = append(nodes, attackGraphNode{
+				ID: nodeID, Parent: "target", Kind: "cluster", Label: cat + " LANE", Depth: 1, Pwned: false, Opsec: 52, Detail: detail,
+			})
+			categoryNodes[cat] = nodeID
+		}
+		if hasLootMatch(loot, endpoint) || hasFindingMatch(findings, endpoint) {
+			categoryPwned[cat] = true
+		}
+	}
 	endpointNodeByRef := map[string]string{}
-	for idx, endpoint := range apiEndpoints {
-		nodeID := fmt.Sprintf("api-endpoint-%d", idx+1)
-		autoLabel := endpointTelemetryLabel(endpoint)
-		nodes = append(nodes, attackGraphNode{
-			ID: nodeID, Parent: "api", Kind: "endpoint", Ref: endpoint, Label: autoLabel + " :: " + truncate(endpoint, 48), Depth: 3,
-			Pwned: hasLootMatch(loot, endpoint) || hasFindingMatch(findings, endpoint), Opsec: 62,
-			Detail: "Telemetry-discovered endpoint (auto-labeled from route structure).",
-		})
-		endpointNodeByRef[strings.ToLower(strings.TrimSpace(endpoint))] = nodeID
+	endpointIdx := 0
+	for _, cat := range categoryOrder {
+		parent := strings.TrimSpace(categoryNodes[cat])
+		if parent == "" {
+			continue
+		}
+		for _, endpoint := range discovered {
+			nodeCat, _ := classifyEndpointWithConfidence(endpoint)
+			if !strings.EqualFold(nodeCat, cat) {
+				continue
+			}
+			if baseTarget != "" && strings.EqualFold(strings.TrimRight(endpoint, "/"), baseTarget) {
+				continue
+			}
+			endpointIdx++
+			nodeID := fmt.Sprintf("endpoint-%d", endpointIdx)
+			autoLabel := endpointTelemetryLabel(endpoint)
+			_, endpointConf := classifyEndpointWithConfidence(endpoint)
+			nodes = append(nodes, attackGraphNode{
+				ID: nodeID, Parent: parent, Kind: "endpoint", Ref: endpoint, Label: autoLabel + " :: " + truncate(endpoint, 48), Depth: 2,
+				Pwned: hasLootMatch(loot, endpoint) || hasFindingMatch(findings, endpoint), Opsec: 60,
+				Detail: "Telemetry-discovered endpoint from commands/findings/loot (confidence=" + strings.ToUpper(endpointConf) + ").",
+			})
+			endpointNodeByRef[strings.ToLower(strings.TrimSpace(endpoint))] = nodeID
+		}
+	}
+	for idx := range nodes {
+		if strings.HasPrefix(strings.ToLower(nodes[idx].ID), "lane-") {
+			lane := strings.TrimPrefix(strings.ToUpper(nodes[idx].ID), "LANE-")
+			nodes[idx].Pwned = categoryPwned[lane]
+			if strings.EqualFold(lane, "AUTH") && authPwned {
+				nodes[idx].Pwned = true
+			}
+		}
 	}
 	if len(collections) > 0 {
 		endpoints := make([]string, 0, len(collections))
@@ -10011,7 +10219,11 @@ func buildExploitAttackGraph(state stateFile, commands []commandEntry, findings 
 			if strings.TrimSpace(collectionID) == "" {
 				collectionID = fmt.Sprintf("collection-%d", collectionIndex)
 			}
-			parent := "api"
+			cat, _ := classifyEndpointWithConfidence(endpoint)
+			parent := strings.TrimSpace(categoryNodes[cat])
+			if parent == "" {
+				parent = "target"
+			}
 			if nodeID, ok := endpointNodeByRef[strings.ToLower(strings.TrimSpace(endpoint))]; ok && strings.TrimSpace(nodeID) != "" {
 				parent = nodeID
 			}
@@ -10043,13 +10255,203 @@ func buildExploitAttackGraph(state stateFile, commands []commandEntry, findings 
 			}
 		}
 	}
-	nodes = append(nodes,
-		attackGraphNode{ID: "db", Parent: "auth", Kind: "cluster", Label: "DB LANE", Depth: 2, Pwned: dbPwned, Opsec: 80, Detail: "Database-level pivot from extracted creds or artifact hints."},
-		attackGraphNode{ID: "files", Parent: "surface", Kind: "cluster", Label: "FILE LANE", Depth: 2, Pwned: filesPwned, Opsec: 45, Detail: "Artifact/backup/file extraction and evidence mining."},
-		attackGraphNode{ID: "impact", Parent: "target", Kind: "cluster", Label: "IMPACT LANE", Depth: 1, Pwned: impactPwned, Opsec: 85, Detail: "Integrity/exfil impact demonstrations and visible tamper."},
-		attackGraphNode{ID: "objective", Parent: "impact", Kind: "cluster", Label: "OBJECTIVE", Depth: 2, Pwned: objectivePwned, Opsec: 90, Detail: "Goal completion (flags/business impact/evidence lock-in)."},
-	)
+	if dbPwned {
+		nodes = append(nodes, attackGraphNode{ID: "db", Parent: "target", Kind: "cluster", Label: "DB LANE", Depth: 1, Pwned: true, Opsec: 80, Detail: "Database pivot evidence seen in telemetry."})
+	}
+	if filesPwned {
+		nodes = append(nodes, attackGraphNode{ID: "files", Parent: "target", Kind: "cluster", Label: "FILE LANE", Depth: 1, Pwned: true, Opsec: 45, Detail: "File/artifact extraction evidence seen in telemetry."})
+	}
+	if impactPwned {
+		nodes = append(nodes, attackGraphNode{ID: "impact", Parent: "target", Kind: "cluster", Label: "IMPACT LANE", Depth: 1, Pwned: true, Opsec: 85, Detail: "Integrity/exfil impact signals seen in telemetry."})
+		if hasLootMatch(loot, "flag") || s.Tamper || s.Exfil {
+			nodes = append(nodes, attackGraphNode{ID: "objective", Parent: "impact", Kind: "cluster", Label: "OBJECTIVE", Depth: 2, Pwned: true, Opsec: 90, Detail: "Objective completion signals discovered in telemetry."})
+		}
+	}
+	nodes[0].Pwned = s.Recon || authPwned || len(discovered) > 0 || dbPwned || filesPwned || impactPwned
 	return nodes
+}
+
+func localEvidencePath(root, raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	text = strings.Trim(text, "\"'`(),;")
+	lower := strings.ToLower(text)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return ""
+	}
+	if strings.Contains(lower, "artifacts/local/") {
+		idx := strings.Index(lower, "artifacts/local/")
+		if idx >= 0 {
+			segment := strings.ReplaceAll(text[idx:], "\\", "/")
+			return filepath.ToSlash(filepath.Clean(segment))
+		}
+	}
+	if strings.HasPrefix(text, "/") || strings.HasPrefix(text, "./") || strings.HasPrefix(text, "../") || strings.Contains(text, "/") {
+		full := text
+		if !filepath.IsAbs(full) {
+			full = filepath.Join(root, full)
+		}
+		rel, err := filepath.Rel(root, full)
+		if err == nil && strings.TrimSpace(rel) != "" {
+			return filepath.ToSlash(filepath.Clean(rel))
+		}
+		return filepath.ToSlash(filepath.Clean(text))
+	}
+	return ""
+}
+
+func extractLocalEvidencePaths(root string, findings []findingEntry, loot []lootEntry) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, 24)
+	push := func(raw string) {
+		for _, token := range strings.Fields(raw) {
+			if candidate := localEvidencePath(root, token); candidate != "" {
+				key := strings.ToLower(candidate)
+				if !seen[key] {
+					seen[key] = true
+					out = append(out, candidate)
+				}
+			}
+		}
+	}
+	for _, entry := range findings {
+		push(entry.Endpoint)
+		push(entry.Evidence)
+		push(entry.Impact)
+	}
+	for _, item := range loot {
+		push(item.Source)
+		push(item.Preview)
+		push(item.Name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func localLaneFromTelemetry(commands []commandEntry, findings []findingEntry, loot []lootEntry) map[string]bool {
+	lanes := map[string]bool{}
+	mark := func(meta string) {
+		text := strings.ToLower(meta)
+		switch {
+		case strings.Contains(text, "privesc"), strings.Contains(text, "linpeas"), strings.Contains(text, "lse"), strings.Contains(text, "suid"), strings.Contains(text, "kernel"):
+			lanes["privesc"] = true
+		case strings.Contains(text, "binary"), strings.Contains(text, "checksec"), strings.Contains(text, "rabin2"), strings.Contains(text, "strings"):
+			lanes["binary"] = true
+		case strings.Contains(text, "package"), strings.Contains(text, "dependency"), strings.Contains(text, "semgrep"), strings.Contains(text, "trivy"), strings.Contains(text, "grype"), strings.Contains(text, "gitleaks"):
+			lanes["code"] = true
+		case strings.Contains(text, "internal"), strings.Contains(text, "smb"), strings.Contains(text, "ldap"), strings.Contains(text, "rpc"):
+			lanes["internal"] = true
+		}
+	}
+	for _, cmd := range commands {
+		mark(cmd.Tool + " " + cmd.Command + " " + cmd.Phase)
+	}
+	for _, finding := range findings {
+		mark(finding.Title + " " + finding.Evidence + " " + finding.Impact)
+	}
+	for _, item := range loot {
+		mark(item.Kind + " " + item.Name + " " + item.Source + " " + item.Preview)
+	}
+	if len(loot) > 0 {
+		lanes["artifacts"] = true
+	}
+	return lanes
+}
+
+func buildLocalAttackGraph(state stateFile, root string, commands []commandEntry, findings []findingEntry, loot []lootEntry) []attackGraphNode {
+	target := strings.TrimSpace(state.TargetURL)
+	if target == "" {
+		target = strings.TrimSpace(root)
+	}
+	nodes := []attackGraphNode{{
+		ID:     "local-target",
+		Kind:   "target",
+		Label:  "LOCAL TARGET",
+		Depth:  0,
+		Pwned:  len(commands)+len(findings)+len(loot) > 0,
+		Opsec:  10,
+		Detail: "Mode-native local tree from telemetry (commands/findings/loot). target=" + truncate(target, 72),
+		Ref:    target,
+	}}
+	lanes := localLaneFromTelemetry(commands, findings, loot)
+	order := []struct {
+		Key   string
+		ID    string
+		Label string
+		Opsec int
+		Desc  string
+	}{
+		{"privesc", "local-lane-privesc", "PRIVESC LANE", 75, "Privilege escalation evidence."},
+		{"binary", "local-lane-binary", "BINARY LANE", 40, "Binary hardening and reverse metadata evidence."},
+		{"code", "local-lane-code", "CODE/PACKAGE LANE", 30, "Code, dependency, and secret audit evidence."},
+		{"internal", "local-lane-internal", "INTERNAL RECON LANE", 35, "Internal network baseline evidence."},
+		{"artifacts", "local-lane-artifacts", "ARTIFACT LANE", 20, "Discovered local artifacts/files/folders."},
+	}
+	for _, lane := range order {
+		if !lanes[lane.Key] {
+			continue
+		}
+		nodes = append(nodes, attackGraphNode{
+			ID:     lane.ID,
+			Parent: "local-target",
+			Kind:   "cluster",
+			Label:  lane.Label,
+			Depth:  1,
+			Pwned:  true,
+			Opsec:  lane.Opsec,
+			Detail: lane.Desc,
+			Ref:    lane.Key,
+		})
+	}
+	paths := extractLocalEvidencePaths(root, findings, loot)
+	if len(paths) > 0 {
+		parent := "local-lane-artifacts"
+		hasParent := false
+		for _, node := range nodes {
+			if node.ID == parent {
+				hasParent = true
+				break
+			}
+		}
+		if !hasParent {
+			nodes = append(nodes, attackGraphNode{
+				ID:     parent,
+				Parent: "local-target",
+				Kind:   "cluster",
+				Label:  "ARTIFACT LANE",
+				Depth:  1,
+				Pwned:  true,
+				Opsec:  20,
+				Detail: "Discovered local artifacts/files/folders.",
+				Ref:    "artifacts",
+			})
+		}
+		dirNodes := map[string]string{}
+		for _, rel := range paths {
+			parts := strings.Split(rel, "/")
+			if len(parts) <= 1 {
+				fileID := "local-file-" + strings.ToLower(strings.ReplaceAll(rel, "/", "-"))
+				nodes = append(nodes, attackGraphNode{ID: fileID, Parent: parent, Kind: "record", Label: rel, Depth: 2, Pwned: true, Opsec: 25, Detail: "discovered local file", Ref: rel})
+				continue
+			}
+			currentParent := parent
+			for idx := 0; idx < len(parts)-1; idx++ {
+				dir := strings.Join(parts[:idx+1], "/")
+				dirID, ok := dirNodes[dir]
+				if !ok {
+					dirID = "local-dir-" + strings.ToLower(strings.ReplaceAll(dir, "/", "-"))
+					dirNodes[dir] = dirID
+					nodes = append(nodes, attackGraphNode{ID: dirID, Parent: currentParent, Kind: "collection", Label: parts[idx] + "/", Depth: 2 + idx, Pwned: true, Opsec: 20, Detail: "discovered folder", Ref: dir})
+				}
+				currentParent = dirID
+			}
+			fileID := "local-file-" + strings.ToLower(strings.ReplaceAll(rel, "/", "-"))
+			nodes = append(nodes, attackGraphNode{ID: fileID, Parent: currentParent, Kind: "record", Label: parts[len(parts)-1], Depth: len(parts) + 1, Pwned: true, Opsec: 25, Detail: rel, Ref: rel})
+		}
+	}
+	return normalizeAttackGraphDepth(nodes)
 }
 
 func buildExploitAttackEdges(_ stateFile, _ []commandEntry, _ []findingEntry, nodes []attackGraphNode) []attackGraphEdge {
@@ -12733,8 +13135,16 @@ func typeBadge(label string) string {
 	switch label {
 	case "AUTH":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("161")).Bold(true).Padding(0, 1).Render("AUTH")
+	case "TOKEN":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("177")).Bold(true).Padding(0, 1).Render("TOKEN")
 	case "ADMIN":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("99")).Bold(true).Padding(0, 1).Render("ADMIN")
+	case "GRAPHQL":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("141")).Bold(true).Padding(0, 1).Render("GQL")
+	case "UPLOAD":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("221")).Bold(true).Padding(0, 1).Render("UPLOAD")
+	case "ASSET":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("188")).Bold(true).Padding(0, 1).Render("ASSET")
 	case "FTP":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("186")).Bold(true).Padding(0, 1).Render("FTP")
 	case "API":
@@ -12832,20 +13242,33 @@ func endpointPriority(status string) int {
 	}
 }
 
-func classifyEndpoint(endpoint string) string {
+func classifyEndpointWithConfidence(endpoint string) (string, string) {
 	e := strings.ToLower(endpoint)
 	switch {
-	case strings.Contains(e, "/login") || strings.Contains(e, "authorization"):
-		return "AUTH"
+	case strings.Contains(e, "/graphql"):
+		return "GRAPHQL", "high"
+	case strings.Contains(e, "/upload") || strings.Contains(e, "/uploads") || strings.Contains(e, "multipart/form-data") || strings.Contains(e, "content-disposition"):
+		return "UPLOAD", "high"
+	case strings.Contains(e, "/assets/") || strings.Contains(e, "/static/") || strings.Contains(e, "/public/") || strings.Contains(e, "/files/") || strings.Contains(e, "/download"):
+		return "ASSET", "high"
+	case strings.Contains(e, "/token") || strings.Contains(e, "bearer") || strings.Contains(e, "jwt"):
+		return "TOKEN", "high"
+	case strings.Contains(e, "/login") || strings.Contains(e, "/auth") || strings.Contains(e, "/oauth") || strings.Contains(e, "authorization"):
+		return "AUTH", "high"
 	case strings.Contains(e, "/rest/admin") || strings.Contains(e, "/api/users"):
-		return "ADMIN"
+		return "ADMIN", "high"
 	case strings.Contains(e, "/ftp"):
-		return "FTP"
+		return "FTP", "high"
 	case strings.Contains(e, "/api/") || strings.Contains(e, "/rest/"):
-		return "API"
+		return "API", "medium"
 	default:
-		return "WEB"
+		return "WEB", "low"
 	}
+}
+
+func classifyEndpoint(endpoint string) string {
+	cat, _ := classifyEndpointWithConfidence(endpoint)
+	return cat
 }
 
 func collapseCommandEvents(events []commandEntry) []commandEntry {
@@ -18113,18 +18536,32 @@ func controlCmd(root string, action controlAction, phase string) tea.Cmd {
 	return func() tea.Msg {
 		var cmd *exec.Cmd
 		commandText := strings.TrimSpace(action.Command)
+		var cancel context.CancelFunc
+		timedOut := false
 		switch action.Mode {
 		case "kali":
 			shell := strings.TrimSpace(action.KaliShell)
 			cmd = exec.Command("docker", "exec", kaliContainerName(), "bash", "-lc", shell)
 			commandText = kaliExecCommand(shell)
 		default:
-			cmd = exec.Command(action.Args[0], action.Args[1:]...)
+			if isNewCampaignAction(action) {
+				var ctx context.Context
+				ctx, cancel = context.WithTimeout(context.Background(), 3*time.Minute)
+				cmd = exec.CommandContext(ctx, action.Args[0], action.Args[1:]...)
+			} else {
+				cmd = exec.Command(action.Args[0], action.Args[1:]...)
+			}
 			cmd.Dir = root
 			commandText = strings.Join(action.Args, " ")
 		}
+		if cancel != nil {
+			defer cancel()
+		}
 		commandID, tool, started := startTelemetryCommand(root, phase, action, commandText)
 		out, err := cmd.CombinedOutput()
+		if cancel != nil && errors.Is(err, context.DeadlineExceeded) {
+			timedOut = true
+		}
 		finalOutput := string(out)
 		if isOSINTAction(action) {
 			if rel, persistErr := persistOSINTResult(root, action, finalOutput); persistErr != nil {
@@ -18160,6 +18597,13 @@ func controlCmd(root string, action controlAction, phase string) tea.Cmd {
 			} else if strings.TrimSpace(rel) != "" {
 				finalOutput += "\n\n[module-loot] captured :: " + rel
 			}
+		}
+		if timedOut {
+			if strings.TrimSpace(finalOutput) != "" {
+				finalOutput += "\n\n"
+			}
+			finalOutput += "[control] new campaign timed out after 180s"
+			err = fmt.Errorf("new campaign timed out after 180s")
 		}
 		finishTelemetryCommand(root, commandID, phase, tool, commandText, started, err, finalOutput, action)
 		return controlResultMsg{

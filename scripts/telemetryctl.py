@@ -129,25 +129,19 @@ def archive_and_clear_artifacts(run_id: str) -> None:
     destination.mkdir(parents=True, exist_ok=True)
 
     # Archive everything from live artifacts except historical runs.
+    # Prefer move over copy+delete so large campaigns rotate quickly.
     for entry in ARTIFACTS.iterdir():
         if entry.name == "runs":
             continue
         if entry.name == ".gitkeep":
             continue
         target = destination / entry.name
-        if entry.is_dir():
-            shutil.copytree(entry, target, dirs_exist_ok=True)
-        else:
-            shutil.copy2(entry, target)
-
-    # Clear live artifacts for the next campaign, keep runs folder.
-    for entry in ARTIFACTS.iterdir():
-        if entry.name == "runs":
-            continue
-        if entry.is_dir():
-            shutil.rmtree(entry, ignore_errors=True)
-        else:
-            entry.unlink(missing_ok=True)
+        if target.exists():
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                target.unlink(missing_ok=True)
+        shutil.move(str(entry), str(target))
     (ARTIFACTS / ".gitkeep").touch(exist_ok=True)
 
 
