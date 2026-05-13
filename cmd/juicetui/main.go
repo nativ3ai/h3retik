@@ -225,6 +225,8 @@ type stateFile struct {
 	Network      string         `json:"network"`
 	Status       string         `json:"status"`
 	Phase        string         `json:"phase"`
+	CVEReference string         `json:"cve_reference"`
+	CVEReferences []string      `json:"cve_references"`
 	LastUpdated  string         `json:"last_updated"`
 	Services     []serviceEntry `json:"services"`
 }
@@ -520,10 +522,13 @@ type model struct {
 	firePipelineIdx         int
 	exploitFireGroupIdx     int
 	exploitPipelineMenu     bool
+	exploitCVEReference     string
 	fireMode                string
 	osintDeepIdx            int
 	cveTasks                []string
 	cveTaskIdx              int
+	cveRefs                 []string
+	cveRefIdx               int
 	replayRuns              []string
 	replayRunIdx            int
 	historyIdx              int
@@ -679,6 +684,8 @@ func initialModel(root string) model {
 		splashFrames:            loadSplashFrames(),
 		loadingFrames:           loadLoadingFrames(),
 		cveTasks:                discoverCVETasks(root),
+		cveRefs:                 discoverTelemetryCVERefs(root),
+		exploitCVEReference:     strings.ToUpper(strings.TrimSpace(os.Getenv("H3RETIK_CVE_REF"))),
 		fireMode:                "exploit",
 		manualTargetKind:        "url",
 		manualTargetInput:       defaultTargetSuggestion(),
@@ -3581,6 +3588,9 @@ func (m *model) reload() {
 		m.moduleInputValues = map[string]string{}
 	}
 	m.state = loadState(filepath.Join(m.telemetryDir, "state.json"))
+	if strings.TrimSpace(m.exploitCVEReference) == "" {
+		m.exploitCVEReference = strings.ToUpper(strings.TrimSpace(m.state.CVEReference))
+	}
 	m.rawCommands = loadJSONL[commandEntry](filepath.Join(m.telemetryDir, "commands.jsonl"))
 	m.commands = collapseCommandEvents(m.rawCommands)
 	prevTopKey := m.lastFindingKey
@@ -3601,6 +3611,11 @@ func (m *model) reload() {
 	m.runState = telemetrypkg.Reduce(m.telemetryEvents())
 	m.attackModules = loadAttackModules(m.root)
 	m.cveTasks = discoverCVETasks(m.root)
+	m.cveRefs = mergeCVERefs(
+		discoverTelemetryCVERefs(m.root),
+		m.state.CVEReferences,
+		[]string{m.state.CVEReference, m.exploitCVEReference},
+	)
 	m.replayRuns = discoverReplayRuns(m.root)
 	if !m.manualTargetMode {
 		target := strings.TrimSpace(m.state.TargetURL)
@@ -3619,6 +3634,7 @@ func (m *model) reload() {
 		}
 	}
 	m.syncCVETaskSelection()
+	m.syncCVEReferenceSelection()
 	m.syncReplaySelection()
 	if m.commandIdx >= len(m.commands) && len(m.commands) > 0 {
 		m.commandIdx = len(m.commands) - 1
@@ -6021,8 +6037,13 @@ func (m model) controlModeContextLines(mode, selectedTask string, onchainProfile
 			metricLine("custom cmd", customCommand),
 		}
 	default:
+		activeRef := strings.TrimSpace(m.exploitCVEReference)
+		if activeRef == "" {
+			activeRef = "unset"
+		}
 		return []string{
-			metricLine("selected cve", selectedTask),
+			metricLine("cve-bench task", selectedTask),
+			metricLine("cve ref", strings.ToUpper(activeRef)),
 			metricLine("pipeline", selectedPipelineLabel(m.selectedPipelineName())),
 			metricLine("fire group", strings.ToUpper(m.selectedExploitFireGroup())),
 			metricLine("fire target", truncate(m.effectiveExploitTargetURL(), 54)),
@@ -14609,6 +14630,48 @@ func (m model) selectedCVETask() string {
 	return m.cveTasks[idx]
 }
 
+func (m model) selectedCVEReference() string {
+	if len(m.cveRefs) == 0 {
+		return "none detected"
+	}
+	idx := clamp(m.cveRefIdx, 0, len(m.cveRefs)-1)
+	return m.cveRefs[idx]
+}
+
+func extractCVEsFromText(raw string) []string {
+	re := regexp.MustCompile(`(?i)\bCVE-\d{4}-\d{4,7}\b`)
+	matches := re.FindAllString(raw, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		cve := strings.ToUpper(strings.TrimSpace(match))
+		if cve == "" || seen[cve] {
+			continue
+		}
+		seen[cve] = true
+		out = append(out, cve)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (m *model) addCVEReference(ref string) {
+	cve := strings.ToUpper(strings.TrimSpace(ref))
+	if cve == "" {
+		return
+	}
+	for _, existing := range m.cveRefs {
+		if strings.EqualFold(existing, cve) {
+			return
+		}
+	}
+	m.cveRefs = append(m.cveRefs, cve)
+	sort.Strings(m.cveRefs)
+}
+
 func (m model) selectedReplayRunLabel() string {
 	if len(m.replayRuns) == 0 {
 		return "none"
@@ -14956,6 +15019,26 @@ func (m model) moduleToAction(mod attackModule) controlAction {
 	return action
 }
 
+func moduleMatchesCVE(mod attackModule, cveRef string) bool {
+	cve := strings.ToLower(strings.TrimSpace(cveRef))
+	if cve == "" {
+		return false
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(mod.ID)), cve) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(mod.Label)), cve) {
+		return true
+	}
+	needle := "cve:" + cve
+	for _, tag := range mod.Tags {
+		if strings.EqualFold(strings.TrimSpace(tag), needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m model) moduleInputStorageKey(moduleID, inputKey string) string {
 	return strings.ToLower(strings.TrimSpace(moduleID)) + "::" + strings.ToLower(strings.TrimSpace(inputKey))
 }
@@ -15090,15 +15173,15 @@ func pipelineNamesForFireGroup(group string) []string {
 	group = strings.ToLower(strings.TrimSpace(group))
 	mapping := map[string][]string{
 		"recon":     {"prelim", "surface-map", "web-enum", "vuln-sweep", "api-probe"},
-		"surface":   {"surface-map", "web-enum", "vuln-sweep", "api-probe"},
-		"web-adv":   {"web-enum", "surface-map", "api-probe", "vuln-sweep"},
-		"exploit":   {"api-probe", "initial-exploit", "vuln-sweep"},
-		"access":    {"password-attacks", "initial-exploit", "api-probe"},
-		"ad":        {"post-enum", "password-attacks", "privesc", "lateral-pivot", "full-escalation"},
-		"k8s":       {"surface-map", "vuln-sweep", "api-probe"},
+		"surface":   {"surface-map", "web-enum", "api-probe", "vuln-sweep"},
+		"web-adv":   {"web-enum", "api-probe", "vuln-sweep", "surface-map"},
+		"exploit":   {"initial-exploit", "api-probe", "vuln-sweep", "full-chain"},
+		"access":    {"password-attacks", "api-probe", "initial-exploit", "full-escalation"},
+		"ad":        {"post-enum", "password-attacks", "lateral-pivot", "privesc", "full-escalation", "full-chain"},
+		"k8s":       {"surface-map", "api-probe", "vuln-sweep", "initial-exploit", "full-chain"},
 		"crack":     {"password-attacks", "post-enum", "full-escalation"},
-		"privilege": {"post-enum", "password-attacks", "privesc", "full-escalation"},
-		"objective": {"full-chain", "initial-exploit", "privesc"},
+		"privilege": {"privesc", "post-enum", "password-attacks", "lateral-pivot", "full-escalation"},
+		"objective": {"full-chain", "full-escalation", "initial-exploit", "privesc", "lateral-pivot"},
 	}
 	names, ok := mapping[group]
 	if !ok || len(names) == 0 {
@@ -15263,6 +15346,23 @@ func (m *model) syncCVETaskSelection() {
 		}
 	}
 	m.cveTaskIdx = clamp(m.cveTaskIdx, 0, len(m.cveTasks)-1)
+}
+
+func (m *model) syncCVEReferenceSelection() {
+	if len(m.cveRefs) == 0 {
+		m.cveRefIdx = 0
+		return
+	}
+	ref := strings.ToUpper(strings.TrimSpace(m.exploitCVEReference))
+	if ref != "" {
+		for i, cve := range m.cveRefs {
+			if strings.EqualFold(cve, ref) {
+				m.cveRefIdx = i
+				return
+			}
+		}
+	}
+	m.cveRefIdx = clamp(m.cveRefIdx, 0, len(m.cveRefs)-1)
 }
 
 func (m *model) syncReplaySelection() {
@@ -15666,6 +15766,52 @@ func (m model) targetActions() []controlAction {
 			Command:     "noop",
 		},
 	)
+	cveRef := m.selectedCVEReference()
+	if cveRef == "none detected" {
+		actions = append(actions, controlAction{
+			Label:       "[CVE] Reference: none detected",
+			Description: "No CVE IDs detected yet in telemetry streams.",
+			Mode:        "internal",
+			Command:     "noop",
+		})
+	} else {
+		activeRef := strings.TrimSpace(m.exploitCVEReference)
+		if activeRef == "" {
+			activeRef = cveRef
+		}
+		actions = append(actions,
+			controlAction{
+				Label:       "[CVE] Reference: " + cveRef + " (Cycle)",
+				Description: "Cycle CVE identifiers extracted from telemetry.",
+				Mode:        "internal",
+				Command:     "target:cve-ref:next",
+			},
+			controlAction{
+				Label:       "[CVE] Load From Selected Finding",
+				Description: "Extract and load CVE from currently selected PWNED finding.",
+				Mode:        "internal",
+				Command:     "target:cve-ref:from-finding",
+			},
+			controlAction{
+				Label:       "[CVE] Load From Selected Loot",
+				Description: "Extract and load CVE from currently selected LOOT entry.",
+				Mode:        "internal",
+				Command:     "target:cve-ref:from-loot",
+			},
+			controlAction{
+				Label:       "[CVE] Apply Reference To FIRE Context",
+				Description: "Pin selected CVE as active exploit reference context.",
+				Mode:        "internal",
+				Command:     "target:cve-ref:apply",
+			},
+			controlAction{
+				Label:       "[CVE] Active FIRE Reference: " + truncate(strings.ToUpper(activeRef), 52),
+				Description: "Reference context used by operator during exploit execution.",
+				Mode:        "internal",
+				Command:     "noop",
+			},
+		)
+	}
 	task := m.selectedCVETask()
 	if task == "none detected" {
 		actions = append(actions,
@@ -15713,26 +15859,19 @@ func (m model) targetActions() []controlAction {
 }
 
 func (m model) fireActions() []controlAction {
-	modeActions := []controlAction{
-		{Label: "[MODE] EXPLOIT", Description: "Switch FIRE lane to exploit/web operations.", Mode: "internal", Command: "fire-mode:exploit"},
-		{Label: "[MODE] LOCAL", Description: "Switch FIRE lane to local file/package/binary redteaming.", Mode: "internal", Command: "fire-mode:local"},
-		{Label: "[MODE] OSINT", Description: "Switch FIRE lane to OSINT workflows.", Mode: "internal", Command: "fire-mode:osint"},
-		{Label: "[MODE] ONCHAIN", Description: "Switch FIRE lane to onchain workflows.", Mode: "internal", Command: "fire-mode:onchain"},
-		{Label: "[MODE] CO-OP", Description: "Switch FIRE lane to co-op/C2 workflows.", Mode: "internal", Command: "fire-mode:coop"},
-	}
 	if strings.EqualFold(m.fireMode, "coop") {
-		return append(modeActions, m.coopFireActions()...)
+		return m.coopFireActions()
 	}
 	if strings.EqualFold(m.fireMode, "onchain") {
-		return append(modeActions, m.onchainFireActions()...)
+		return m.onchainFireActions()
 	}
 	if strings.EqualFold(m.fireMode, "osint") {
-		return append(modeActions, m.osintFireActions()...)
+		return m.osintFireActions()
 	}
 	if strings.EqualFold(m.fireMode, "local") {
-		return append(modeActions, m.localFireActions()...)
+		return m.localFireActions()
 	}
-	return append(modeActions, m.exploitFireActions()...)
+	return m.exploitFireActions()
 }
 
 func (m model) coopFireActions() []controlAction {
@@ -16386,7 +16525,19 @@ func (m model) exploitFireActions() []controlAction {
 	actions := []controlAction{}
 	snap := deriveChainSnapshot(m.commands, m.findings, m.loot)
 	if strings.EqualFold(group, "Modules") {
-		for _, mod := range m.attackModules {
+		activeCVE := strings.ToLower(strings.TrimSpace(m.exploitCVEReference))
+		mods := append([]attackModule{}, m.attackModules...)
+		if activeCVE != "" {
+			sort.SliceStable(mods, func(i, j int) bool {
+				im := moduleMatchesCVE(mods[i], activeCVE)
+				jm := moduleMatchesCVE(mods[j], activeCVE)
+				if im == jm {
+					return strings.ToLower(strings.TrimSpace(mods[i].Label)) < strings.ToLower(strings.TrimSpace(mods[j].Label))
+				}
+				return im && !jm
+			})
+		}
+		for _, mod := range mods {
 			if !strings.EqualFold(strings.TrimSpace(mod.Mode), "exploit") {
 				continue
 			}
@@ -16400,6 +16551,9 @@ func (m model) exploitFireActions() []controlAction {
 				})
 			}
 			action := m.moduleToAction(mod)
+			if activeCVE != "" && moduleMatchesCVE(mod, activeCVE) {
+				action.Label = "[CVE] " + action.Label
+			}
 			done := actionDone(action, m.commands)
 			ready, reason := requirementsReady(action.Requires, snap)
 			state := "READY"
@@ -16447,45 +16601,6 @@ func (m model) exploitFireActions() []controlAction {
 		}
 		return actions
 	}
-	if !strings.EqualFold(group, "Custom") {
-		actions = append(actions, controlAction{
-			Label:       "[MENU] Pipelines",
-			Description: "Open pipeline selector for " + strings.ToUpper(group) + " and run with Enter.",
-			Mode:        "internal",
-			Command:     "fire:pipelines:open",
-			Group:       group,
-		})
-		actions = append(actions,
-			controlAction{
-				Label:       "[INTENT] Surface Expansion",
-				Description: "Jump fire group to SURFACE discovery path.",
-				Mode:        "internal",
-				Command:     "intent:set:surface",
-				Group:       group,
-			},
-			controlAction{
-				Label:       "[INTENT] Foothold",
-				Description: "Jump fire group to EXPLOIT path for foothold attempts.",
-				Mode:        "internal",
-				Command:     "intent:set:exploit",
-				Group:       group,
-			},
-			controlAction{
-				Label:       "[INTENT] Credential/Access",
-				Description: "Jump fire group to ACCESS path.",
-				Mode:        "internal",
-				Command:     "intent:set:access",
-				Group:       group,
-			},
-			controlAction{
-				Label:       "[INTENT] Objective",
-				Description: "Jump fire group to OBJECTIVE path.",
-				Mode:        "internal",
-				Command:     "intent:set:objective",
-				Group:       group,
-			},
-		)
-	}
 	if strings.EqualFold(group, "Custom") {
 		actions = append(actions, m.customFireActions("exploit")...)
 	}
@@ -16508,7 +16623,7 @@ func (m model) exploitFireActions() []controlAction {
 		}
 		actions = append(actions, labeled)
 	}
-	if len(actions) <= 1 && !strings.EqualFold(group, "Custom") {
+	if len(actions) == 0 && !strings.EqualFold(group, "Custom") {
 		actions = append(actions, controlAction{
 			Label:       "No actions in group",
 			Description: "No local commands in this fire category yet.",
@@ -17181,6 +17296,68 @@ func (m *model) applyInternalAction(action controlAction) {
 	case "target:inner:clear":
 		m.exploitActiveTarget = ""
 		m.controlStatus = "ok :: FIRE target override cleared"
+	case "target:cve-ref:next":
+		if len(m.cveRefs) == 0 {
+			m.controlStatus = "cve reference unavailable :: no CVE ids detected"
+			break
+		}
+		m.cveRefIdx = (m.cveRefIdx + 1) % len(m.cveRefs)
+		m.controlStatus = "ok :: CVE reference -> " + m.selectedCVEReference()
+	case "target:cve-ref:from-finding":
+		if len(m.findings) == 0 || m.findingIdx < 0 || m.findingIdx >= len(m.findings) {
+			m.controlStatus = "cve load failed :: no finding selected"
+			break
+		}
+		f := m.findings[m.findingIdx]
+		text := strings.Join([]string{f.Title, f.Endpoint, f.Evidence, f.Impact, f.Phase, f.Severity}, " ")
+		cves := extractCVEsFromText(text)
+		if len(cves) == 0 {
+			m.controlStatus = "cve load failed :: no CVE found in selected finding"
+			break
+		}
+		ref := cves[0]
+		m.addCVEReference(ref)
+		m.exploitCVEReference = ref
+		_ = os.Setenv("H3RETIK_CVE_REF", ref)
+		_ = persistCVEReference(filepath.Join(m.telemetryDir, "state.json"), ref)
+		m.syncCVEReferenceSelection()
+		m.controlStatus = "ok :: CVE loaded from finding -> " + ref
+	case "target:cve-ref:from-loot":
+		if len(m.loot) == 0 || m.lootIdx < 0 || m.lootIdx >= len(m.loot) {
+			m.controlStatus = "cve load failed :: no loot selected"
+			break
+		}
+		item := m.loot[m.lootIdx]
+		text := strings.Join([]string{item.Kind, item.Name, item.Source, item.Preview}, " ")
+		cves := extractCVEsFromText(text)
+		if len(cves) == 0 {
+			m.controlStatus = "cve load failed :: no CVE found in selected loot"
+			break
+		}
+		ref := cves[0]
+		m.addCVEReference(ref)
+		m.exploitCVEReference = ref
+		_ = os.Setenv("H3RETIK_CVE_REF", ref)
+		_ = persistCVEReference(filepath.Join(m.telemetryDir, "state.json"), ref)
+		m.syncCVEReferenceSelection()
+		m.controlStatus = "ok :: CVE loaded from loot -> " + ref
+	case "target:cve-ref:prev":
+		if len(m.cveRefs) == 0 {
+			m.controlStatus = "cve reference unavailable :: no CVE ids detected"
+			break
+		}
+		m.cveRefIdx = (m.cveRefIdx + len(m.cveRefs) - 1) % len(m.cveRefs)
+		m.controlStatus = "ok :: CVE reference -> " + m.selectedCVEReference()
+	case "target:cve-ref:apply":
+		ref := strings.TrimSpace(m.selectedCVEReference())
+		if ref == "" || strings.EqualFold(ref, "none detected") {
+			m.controlStatus = "cve reference apply failed :: no CVE selected"
+			break
+		}
+		m.exploitCVEReference = strings.ToUpper(ref)
+		_ = os.Setenv("H3RETIK_CVE_REF", m.exploitCVEReference)
+		_ = persistCVEReference(filepath.Join(m.telemetryDir, "state.json"), m.exploitCVEReference)
+		m.controlStatus = "ok :: active FIRE CVE reference -> " + m.exploitCVEReference
 	case "target:osint-type:next":
 		types := osintInputTypes()
 		if len(types) > 0 {
@@ -19311,6 +19488,61 @@ func discoverCVETasks(root string) []string {
 	return tasks
 }
 
+func discoverTelemetryCVERefs(root string) []string {
+	re := regexp.MustCompile(`(?i)\bCVE-\d{4}-\d{4,7}\b`)
+	paths := []string{
+		filepath.Join(root, "telemetry", "commands.jsonl"),
+		filepath.Join(root, "telemetry", "findings.jsonl"),
+		filepath.Join(root, "telemetry", "loot.jsonl"),
+		filepath.Join(root, "telemetry", "exploits.jsonl"),
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, 16)
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		matches := re.FindAllString(string(data), -1)
+		for _, match := range matches {
+			cve := strings.ToUpper(strings.TrimSpace(match))
+			if cve == "" || seen[cve] {
+				continue
+			}
+			seen[cve] = true
+			out = append(out, cve)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func mergeCVERefs(groups ...[]string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, 16)
+	re := regexp.MustCompile(`(?i)\bCVE-\d{4}-\d{4,7}\b`)
+	for _, group := range groups {
+		for _, item := range group {
+			cve := strings.ToUpper(strings.TrimSpace(item))
+			if cve == "" {
+				continue
+			}
+			match := re.FindString(cve)
+			if strings.TrimSpace(match) == "" {
+				continue
+			}
+			cve = strings.ToUpper(strings.TrimSpace(match))
+			if seen[cve] {
+				continue
+			}
+			seen[cve] = true
+			out = append(out, cve)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func discoverReplayRuns(root string) []string {
 	runsDir := filepath.Join(root, "telemetry", "runs")
 	entries, err := os.ReadDir(runsDir)
@@ -19406,6 +19638,25 @@ func loadState(path string) stateFile {
 		return stateFile{}
 	}
 	return out
+}
+
+func persistCVEReference(path, cveRef string) error {
+	state := loadState(path)
+	ref := strings.ToUpper(strings.TrimSpace(cveRef))
+	state.CVEReference = ref
+	if ref != "" {
+		refs := mergeCVERefs(state.CVEReferences, []string{state.CVEReference})
+		state.CVEReferences = refs
+	}
+	state.LastUpdated = time.Now().UTC().Format(time.RFC3339)
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func loadJSONL[T any](path string) []T {

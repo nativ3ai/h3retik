@@ -251,7 +251,22 @@ function windowsUsage() {
   console.log("  h3retik shell          # shell in kali container");
   console.log("  h3retik kali <cmd...>  # execute command in kali");
   console.log("  h3retik doctor         # runtime checks");
+  console.log("  h3retik cve <subcmd>   # load/show/apply/list CVE context");
   console.log("  h3retik version        # print version");
+}
+
+function pythonCommand() {
+  const py3 = spawnSync("python3", ["--version"], { stdio: "ignore" });
+  if (py3.status === 0) return "python3";
+  const py = spawnSync("python", ["--version"], { stdio: "ignore" });
+  if (py.status === 0) return "python";
+  throw new Error("python3/python is required for CVE commands");
+}
+
+function runCvectl(args) {
+  const py = pythonCommand();
+  const script = path.join(ROOT, "scripts", "cvectl.py");
+  runOrThrow(py, [script, ...args], { cwd: ROOT });
 }
 
 function ensureDockerAvailable() {
@@ -334,6 +349,9 @@ async function runWindowsEntry(rawArgs) {
   const rest = args.slice(1);
 
   switch (cmd) {
+    case "cve":
+      runCvectl(rest);
+      return;
     case "init":
     case "setup": {
       const yesParsed = parseYesArg(rest);
@@ -405,6 +423,10 @@ async function runWindowsEntry(rawArgs) {
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = (argv[0] || "").toLowerCase();
+  if (cmd === "cve") {
+    runCvectl(argv.slice(1));
+    return;
+  }
   if (!IS_WINDOWS) {
     await ensurePrebuiltBinary();
     if (!fs.existsSync(GLOBAL_LAUNCHER)) {
